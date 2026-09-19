@@ -64,6 +64,11 @@ export const runtimeProcessEntrypoints = {
     sourceWorkerName: "../worker/memory-worker-entry",
     distWorkerPath: "worker/memory-worker-entry.js",
   },
+  sessionManagerMetadata: {
+    currentModuleUrl,
+    sourceWorkerName: "../agents/sessions/session-manager-metadata.worker",
+    distWorkerPath: "agents/sessions/session-manager-metadata.worker.js",
+  },
   sqliteStore: {
     currentModuleUrl,
     sourceWorkerName: "sqlite-store.worker",
