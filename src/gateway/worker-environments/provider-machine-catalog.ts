@@ -21,6 +21,7 @@ export function createWorkerMachineCatalog(
   type MachineCatalog = {
     providerId: string;
     settings: WorkerProfile;
+    providerDisplayId?: string;
     machines?: readonly WorkerMachineOption[];
     systems?: readonly WorkerOperatingSystem[];
     warmup?: Promise<void>;
@@ -55,6 +56,20 @@ export function createWorkerMachineCatalog(
       !isDeepStrictEqual(catalog.settings, settings)
     ) {
       catalog = { providerId: profile.provider, settings: structuredClone(settings) };
+      try {
+        const displayId = options
+          .resolveProvider(profile.provider)
+          ?.resolveDisplayId?.(structuredClone(settings));
+        if (
+          typeof displayId === "string" &&
+          /^[a-z][a-z0-9-]{0,63}$/.test(displayId) &&
+          displayId.trim() === displayId
+        ) {
+          catalog.providerDisplayId = displayId;
+        }
+      } catch {
+        // Cosmetic metadata must not hide profiles or leak settings in diagnostics.
+      }
       machineCatalogs.set(profileId, catalog);
       machineCatalogChanged(profileId, catalog);
     }
@@ -154,6 +169,14 @@ export function createWorkerMachineCatalog(
   };
 
   return {
+    readProviderDisplayId: (profileId: string) => {
+      try {
+        return machineCatalogFor(profileId)?.providerDisplayId;
+      } catch {
+        // Invalid profile settings retain the existing catalog failure path.
+        return undefined;
+      }
+    },
     listMachineOptions,
     listOperatingSystems,
     readMachineShape,

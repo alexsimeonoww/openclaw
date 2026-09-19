@@ -52,6 +52,7 @@ it("moves with the selected OS and limits machine choices to that OS", async () 
         {
           id: "aws",
           providerId: "crabbox",
+          providerDisplayId: "azure",
           operatingSystems: [
             { id: "linux", label: "Linux", default: true },
             { id: "windows/wsl2", label: "Windows (WSL2)" },
@@ -77,6 +78,8 @@ it("moves with the selected OS and limits machine choices to that OS", async () 
   };
 
   try {
+    expect(button("cloud:aws").querySelector('[data-provider-icon="azure"]')).not.toBeNull();
+    expect(button("cloud:aws").getAttribute("aria-label")).toContain("Azure");
     button("cloud:aws").click();
     expect(button("os:linux").getAttribute("aria-pressed")).toBe("true");
     expect(button("machine:tiny").textContent).toContain("Linux tiny");

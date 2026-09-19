@@ -3,6 +3,7 @@ import "../../components/tooltip.ts";
 import type { EnvironmentsListResult } from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { icons } from "../../components/icons.ts";
+import { resolveCloudProfileIcon } from "../../components/provider-icon.ts";
 import { t } from "../../i18n/index.ts";
 import { registerNewSessionSetupEnglish } from "../../i18n/locales/en-new-session-setup.ts";
 import type {
@@ -38,6 +39,7 @@ export async function requestPlaceCatalog(
 type SessionMenuItemOptions = {
   value: string;
   label: string;
+  accessibleProvider?: string;
   description?: string;
   icon?: unknown;
   sub?: string;
@@ -100,6 +102,18 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
       aria-description=${params.suggested ? t("newSession.machineDefault") : nothing}
       data-value=${params.value}
       data-popover=${params.keepOpen || accessibleBlocker ? nothing : "close"}
+      aria-label=${
+        params.accessibleProvider
+          ? [
+              params.label,
+              t("newSession.cloudWorkerProvider", { provider: params.accessibleProvider }),
+              params.selectedSummary,
+              description,
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : nothing
+      }
       aria-pressed=${String(params.checked)}
       title=${params.compact ? nothing : (params.title ?? nothing)}
       ?disabled=${submitting || (Boolean(params.disabled) && !accessibleBlocker)}
@@ -250,7 +264,6 @@ export function renderCloudProfileMenuItems(params: {
   onSelectOs?: (osId: string) => void;
   onSelectMachine?: (machineId: string) => void;
   submitting: boolean;
-  icon?: unknown;
   disabled?: boolean;
   disabledReason?: string;
   profileDisabledReason?: (profile: DraftCloudProfile) => string | undefined;
@@ -258,6 +271,7 @@ export function renderCloudProfileMenuItems(params: {
   onSelect: (profileId: string, useDefaults?: boolean) => void;
 }) {
   return params.profiles.map((profile) => {
+    const presentation = resolveCloudProfileIcon(profile);
     const profileDisabledReason = params.profileDisabledReason?.(profile);
     const selected = params.selectedId === profile.id;
     const osId = (selected ? params.selectedOs : undefined) || defaultCloudOs(profile);
@@ -282,7 +296,8 @@ export function renderCloudProfileMenuItems(params: {
           params.compact && selected
             ? [os?.label, machine?.label].filter(Boolean).join(" · ")
             : undefined,
-        icon: params.icon,
+        icon: presentation.icon,
+        accessibleProvider: presentation.label,
         compact: params.compact,
         facts:
           !params.compact && profile.trust === "disposable"
@@ -291,7 +306,7 @@ export function renderCloudProfileMenuItems(params: {
               ? [t("newSession.environmentPersistent")]
               : undefined,
         trust: params.compact ? profile.trust : undefined,
-        provider: params.compact ? profile.providerId : undefined,
+        provider: params.compact ? presentation.label : undefined,
         platform: params.compact ? os?.label : undefined,
         hardware: params.compact && machine ? machineShapeText(machine) : undefined,
         hideDetails: params.compact && !params.disabled && !profileDisabledReason,
@@ -300,7 +315,7 @@ export function renderCloudProfileMenuItems(params: {
         disabled: params.disabled || Boolean(profileDisabledReason),
         title:
           (params.disabled ? params.disabledReason : profileDisabledReason) ??
-          t("newSession.cloudWorkerProvider", { provider: profile.providerId }),
+          t("newSession.cloudWorkerProvider", { provider: presentation.label }),
         onSelect: () =>
           params.compact && !selected
             ? params.onSelect(profile.id, true)
