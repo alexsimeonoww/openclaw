@@ -1,6 +1,10 @@
 import type { ApplicationContext } from "../../app/context.ts";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
 import type { SessionCreateOutcome } from "../../lib/sessions/create.ts";
+import {
+  cloneChatAttachmentsForIndependentOwner,
+  releaseChatAttachmentPayloads,
+} from "../chat/attachment-payload-store.ts";
 import { buildInitialChatSubmission } from "../chat/user-message-content.ts";
 import type { InstantThreadHandoff } from "./instant-thread-handoff.ts";
 import { retainRejectedInitialTurn } from "./rejected-initial-turn.ts";
@@ -63,14 +67,20 @@ export async function completeInitialSessionTurn(
     }
     return;
   }
-  const handedOffAttachments = retainInitialSessionTurn(options);
-  if (
-    initialRun.status === "rejected" &&
-    options.turn.attachments.length === 0 &&
-    options.onRejectedPrompt
-  ) {
+  if (initialRun.status === "rejected" && options.onRejectedPrompt) {
+    // Both the launcher and the created session keep a rejected prompt. They
+    // must not share payload IDs: editing either draft may release its images.
+    const attachments = cloneChatAttachmentsForIndependentOwner(options.turn.attachments);
+    const handedOff = retainInitialSessionTurn({
+      ...options,
+      turn: { ...options.turn, attachments },
+    });
+    if (!handedOff) {
+      releaseChatAttachmentPayloads(attachments);
+    }
     options.onRejectedPrompt(initialRun.error);
   } else {
+    const handedOffAttachments = retainInitialSessionTurn(options);
     await options.clearDraft(!handedOffAttachments);
   }
   if (!options.isCurrent() || (instant && !instant.isCurrent())) {
