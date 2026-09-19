@@ -5,6 +5,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { CHAT_PENDING_INPUT_MESSAGE_PREFIX } from "../../../../../packages/gateway-protocol/src/schema/chat-history-constants.js";
 import { icons } from "../../../components/icons.ts";
 import type { ImageLightboxItem } from "../../../components/image-lightbox.types.ts";
+import { parseMarkdownJson } from "../../../components/markdown-json.ts";
 import type { MarkdownRenderOptions } from "../../../components/markdown-render-options.ts";
 import { toSanitizedMarkdownHtml } from "../../../components/markdown.ts";
 import { t } from "../../../i18n/index.ts";
@@ -50,7 +51,6 @@ import {
   type ArtifactDownloadResolver,
 } from "./chat-message-media.ts";
 import {
-  detectJson,
   renderMessageJson,
   renderMessageMarkdown,
   type AssistantMessageDisclosure,
@@ -294,8 +294,8 @@ export function renderGroupedMessage(
     linkFavicons: Boolean(opts.fetchLinkFavicon) && !opts.isStreaming,
   };
 
-  // Detect pure-JSON messages and render as collapsible block
-  const jsonResult = markdown && !opts.isStreaming ? detectJson(markdown) : null;
+  // Classify completed bare JSON before Markdown can interpret its literal values.
+  const jsonResult = markdown && !opts.isStreaming ? parseMarkdownJson(markdown) : null;
 
   const onlyPreviewChips =
     normalizedRole === "user" &&
@@ -462,10 +462,7 @@ export function renderGroupedMessage(
           .presentation=${opts.asyncQuestions}
         ></openclaw-chat-async-question>`
       : jsonResult
-        ? renderMessageJson(
-            jsonResult,
-            isStandaloneToolMessage && Boolean(opts.autoExpandToolCalls),
-          )
+        ? renderMessageJson(jsonResult, markdownRenderOptions)
         : bodyMarkdown
           ? renderMessageMarkdown(
               bodyMarkdown,
