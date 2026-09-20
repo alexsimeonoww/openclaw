@@ -2288,7 +2288,7 @@
     "@types/web-push": "3.6.4",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "5.0.0",
-    "acpx": "git+https://github.com/openclaw/acpx.git#1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba",
+    "acpx": "0.17.1",
     "apache-arrow": "21.2.0",
     "baileys": "7.0.0-rc14",
     "esbuild": "0.28.2",

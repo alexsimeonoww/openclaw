@@ -495,8 +495,8 @@ importers:
         specifier: 5.0.0
         version: 5.0.0(@vitest/browser@5.0.0)(vitest@5.0.0)
       acpx:
-        specifier: git+https://github.com/openclaw/acpx.git#1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba
-        version: https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba
+        specifier: 0.17.1
+        version: 0.17.1
       apache-arrow:
         specifier: 21.2.0
         version: 21.2.0
@@ -635,8 +635,8 @@ importers:
         specifier: 1.10.0
         version: 1.10.0
       acpx:
-        specifier: git+https://github.com/openclaw/acpx.git#1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba
-        version: https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba
+        specifier: 0.17.1
+        version: 0.17.1
       smol-toml:
         specifier: 1.8.0
         version: 1.8.0
@@ -6111,9 +6111,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  acpx@https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba:
-    resolution: {gitHosted: true, integrity: sha512-K9EIcPI7HsHXS1C3JHn+s6i2sXP6vOePSoIUSYOlq2vg5PcXGwzR0SrfZIAgF0BS9HMaADOrJrY0MQmA7sHCLw==, tarball: https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba}
-    version: 0.17.0
+  acpx@0.17.1:
+    resolution: {integrity: sha512-VafoVDYO8xE/Pd/8hTwAR6eHoSJf3K119knfFfAjCVqGy8ilGtWoVRI8z7fm+Q1o+R1vKDo58MJoxDx6YIt1tQ==}
     engines: {node: '>=22.13.0'}
     hasBin: true
 
@@ -13455,7 +13454,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  acpx@https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba:
+  acpx@0.17.1:
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.6.2)
       '@openclaw/fs-safe': 0.12.0
