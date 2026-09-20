@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -7,10 +6,7 @@ import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import JSON5 from "json5";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveGatewayInstallEntrypoint } from "../daemon/gateway-entrypoint.js";
-import {
-  redactSupportDiagnosticLine,
-  redactSupportString,
-} from "../logging/diagnostic-support-redaction.js";
+import { redactSupportString } from "../logging/diagnostic-support-redaction.js";
 import {
   parseOpenClawSchemaVersions,
   type OpenClawSchemaVersions,
@@ -19,7 +15,7 @@ import { hasErrnoCode } from "./errors.js";
 import { readPackageVersion } from "./package-json.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
 import { resolveSqliteInspectionBudget } from "./sqlite-readonly-worker.js";
-import { terminateCanary, waitBounded } from "./update-candidate-canary-process.js";
+import { launchCanary, terminateCanary, waitBounded } from "./update-candidate-canary-process.js";
 import { waitForUpdateCandidateReadiness } from "./update-candidate-canary-readiness.js";
 import {
   prepareUpdateCandidateRehearsal,
@@ -144,122 +140,20 @@ export async function validateUpdateCandidateCanary(params: {
     }
     return safe;
   };
-  const launch = (entry: string, args: string[]) => {
-    params.assertCurrent?.();
-    const child = spawn(params.nodeRunner ?? process.execPath, [entry, ...args], {
-      cwd: params.root,
+  const launch = (entry: string, args: string[]) =>
+    launchCanary({
+      entry,
+      args,
+      root: params.root,
       env,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
+      nodeRunner: params.nodeRunner,
+      stateDir: params.stateDir,
+      assertCurrent: params.assertCurrent,
+      capture,
+      onSpawn: () => {
+        unsettledCanaries += 1;
+      },
     });
-    unsettledCanaries += 1;
-    let stdout = "";
-    let firstStderrLine: string | undefined;
-    let cliReason: string | undefined;
-    const captureStderr = (line: string) => {
-      if (!line.trim()) {
-        return;
-      }
-      const safe = redactSupportDiagnosticLine(line, { env, stateDir: params.stateDir });
-      firstStderrLine ??= safe;
-      // The CLI prints a generic heading before its actual failure reason.
-      if (line.startsWith("[openclaw] Reason: ")) {
-        cliReason ??= safe.replace(/^\[openclaw\] Reason: /u, "");
-      }
-    };
-    let stdoutBytes = 0;
-    let outputExceeded = false;
-    const flushers = [child.stdout, child.stderr].map((stream) => {
-      // Node entrypoints emit UTF-8; pipe chunks need not end at code-point boundaries.
-      stream.setEncoding("utf8");
-      let pending = "";
-      let droppingLine = false;
-      stream.on("data", (chunk: string) => {
-        let text = chunk;
-        if (droppingLine) {
-          const newline = text.indexOf("\n");
-          if (newline < 0) {
-            return;
-          }
-          text = text.slice(newline + 1);
-          droppingLine = false;
-        }
-        pending += text;
-        const lines = pending.split(/\r?\n/u);
-        pending = lines.pop() ?? "";
-        for (const line of lines) {
-          if (stream === child.stderr) {
-            captureStderr(line);
-          }
-          capture(line);
-        }
-        if (pending.length > 64 * 1024) {
-          // Discard an oversized unterminated line whole, never through a secret.
-          pending = "";
-          droppingLine = true;
-          if (stream === child.stderr) {
-            firstStderrLine ??= "[oversized log line omitted]";
-          }
-          capture("[oversized log line omitted]");
-        }
-      });
-      return () => {
-        if (pending) {
-          if (stream === child.stderr) {
-            captureStderr(pending);
-          }
-          capture(pending);
-          pending = "";
-        }
-      };
-    });
-    child.stdout.on("data", (chunk: string) => {
-      stdoutBytes += Buffer.byteLength(chunk);
-      if (stdoutBytes <= 1024 * 1024) {
-        stdout += chunk;
-      } else {
-        outputExceeded = true;
-      }
-    });
-    let exited = false;
-    let processExited = false;
-    let killed = false;
-    child.once("exit", (_code, signal) => {
-      processExited = true;
-      killed = Boolean(signal);
-    });
-    const result = new Promise<number | null>((resolve) => {
-      child.once("error", (error) => {
-        captureStderr(error.message);
-        capture(error.message);
-        exited = true;
-        resolve(null);
-      });
-      child.once("close", (code) => {
-        for (const flush of flushers) {
-          flush();
-        }
-        exited = true;
-        resolve(code);
-      });
-    });
-    // An error can settle validation without proving that the child and its pipes closed.
-    const closed = new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
-    });
-    return {
-      child,
-      result,
-      closed,
-      hasExited: () => exited,
-      processExited: () => processExited,
-      wasKilled: () => killed,
-      stdout: () => stdout,
-      firstStderrLine: () => cliReason ?? firstStderrLine,
-      outputExceeded: () => outputExceeded,
-    };
-  };
   const stopCanary = async (running: ReturnType<typeof launch>, name: string, deadline: number) => {
     const cleanupStarted = Date.now();
     if (await terminateCanary(running.child, running.closed, deadline)) {
