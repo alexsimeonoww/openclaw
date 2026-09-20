@@ -242,7 +242,7 @@ export async function augmentModelCatalogWithAgentHarness(params: {
     params.onError?.(error);
     return params.snapshot;
   }
-  const result = { ...params.snapshot };
+  let result = params.snapshot;
   const completedRows: ModelCatalogEntry[] = [];
   let discovered = false;
   for (const [runtime, providers] of runtimeProviders) {
@@ -308,13 +308,24 @@ export async function augmentModelCatalogWithAgentHarness(params: {
       configuredKeys.has(resolveModelCatalogIdentityKey(entry)) ||
       (includesProvider !== undefined && !includesProvider(entry.provider));
     const retainedEntries = result.entries.filter(retain);
-    // An optional native inventory must not replace the configured base's logical row.
+    const retainedVariants = result.routeVariants.filter(retain);
+    if (
+      rows.length === 0 &&
+      retainedEntries.length === result.entries.length &&
+      retainedVariants.length === result.routeVariants.length
+    ) {
+      continue;
+    }
+    if (result === params.snapshot) {
+      result = { ...params.snapshot };
+    }
+    // Optional native inventory must not replace the configured base's logical row.
     result.entries = dedupeByKey(
       runtime === defaultRuntime ? [...rows, ...retainedEntries] : [...retainedEntries, ...rows],
       createModelCatalogIdentityKeyResolver(),
     );
     const variantKeyOf = createModelCatalogIdentityKeyResolver();
-    result.routeVariants = dedupeByKey([...rows, ...result.routeVariants.filter(retain)], (entry) =>
+    result.routeVariants = dedupeByKey([...rows, ...retainedVariants], (entry) =>
       routeVariantKey(entry, variantKeyOf(entry)),
     );
   }
@@ -324,7 +335,7 @@ export async function augmentModelCatalogWithAgentHarness(params: {
   if (discovered) {
     params.onDiscoveryCompleted?.(completedRows);
   }
-  return discovered ? result : params.snapshot;
+  return result;
 }
 
 function preparedHarnessCatalogScope(

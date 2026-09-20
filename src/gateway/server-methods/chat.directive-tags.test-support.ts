@@ -55,7 +55,6 @@ export async function seedChatDirectiveFileTranscript(
   // The accessor resolves transcript targets from the persisted store, not the mocked Gateway.
   await replaceSessionEntry(scope, {
     sessionId,
-    sessionFile,
     agentRuntimeOverride: "openclaw",
     updatedAt: Date.now(),
   });
