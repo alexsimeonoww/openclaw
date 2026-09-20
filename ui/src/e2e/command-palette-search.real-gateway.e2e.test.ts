@@ -337,12 +337,12 @@ suite.define(() => {
     try {
       // Gateway readiness precedes background UI preparation. The JSON handoff
       // deliberately fails fast, so await its document prerequisite here.
-      const document = await waitForControlUiDocument({
+      const uiDocument = await waitForControlUiDocument({
         url: suite.server.baseUrl,
         timeoutMs: 60_000,
         onPending: () => console.log("[search-proof] waiting for the preparing UI document"),
       });
-      expect(document.ready, document.ready ? "ready" : document.reason).toBe(true);
+      expect(uiDocument.ready, uiDocument.ready ? "ready" : uiDocument.reason).toBe(true);
       const handoff = await owner.cli(["dashboard", "--json"]);
       const result = requireRecord(JSON.parse(handoff.stdout));
       expect(
