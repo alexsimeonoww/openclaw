@@ -7,8 +7,10 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveExecConfigState } from "../../agents/exec-defaults.js";
-import { resolveAgentHarnessExecutionRestriction } from "../../agents/harness/execution-environment.js";
-import { resolveAgentHarnessNativeToolPolicyRestricted } from "../../agents/harness/selection.js";
+import {
+  resolveAgentHarnessExecutionRestriction,
+  resolveAgentHarnessNativeToolPolicyRestricted,
+} from "../../agents/harness/execution-environment.js";
 import type { AgentHarness } from "../../agents/harness/types.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";

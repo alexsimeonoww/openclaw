@@ -9,7 +9,7 @@ import { upsertSessionEntry } from "../../plugin-sdk/session-store-runtime.js";
 import { readVisibleSessionTranscriptMessageEntries } from "../../plugin-sdk/session-transcript-runtime.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
-import { chatHandlers } from "./chat.js";
+import { coreGatewayHandlers } from "./core-handlers.js";
 import type { RespondFn } from "./types.js";
 
 useNativeProcessFixture();
@@ -44,7 +44,7 @@ it("returns a typed native restriction before chat.send admits or persists the m
     const context = createDirectChatContext({ getRuntimeConfig: () => config });
     try {
       await expectDefined(
-        chatHandlers["chat.send"],
+        coreGatewayHandlers["chat.send"],
         "registered chat.send",
       )({
         req: { type: "req", id: "native-consent-request", method: "chat.send" },

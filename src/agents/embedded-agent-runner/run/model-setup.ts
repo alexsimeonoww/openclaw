@@ -4,13 +4,13 @@ import { requireActivePluginRegistry } from "../../../plugins/runtime.js";
 import { resolveSessionPinnedHarnessId } from "../../../sessions/agent-harness-session-key.js";
 import { FailoverError } from "../../failover-error.js";
 import { AgentHarnessPreflightError } from "../../harness/errors.js";
-import { assertAgentHarnessExecutionEnvironment } from "../../harness/execution-environment.js";
+import {
+  assertAgentHarnessExecutionEnvironment,
+  resolveAgentHarnessNativeToolPolicyRestricted,
+} from "../../harness/execution-environment.js";
 import { getRegisteredAgentHarness } from "../../harness/registry.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../harness/runtime-plugin.js";
-import {
-  resolveAgentHarnessNativeToolPolicyRestricted,
-  selectAgentHarness,
-} from "../../harness/selection.js";
+import { selectAgentHarness } from "../../harness/selection.js";
 import { readSessionRuntimeOwnership } from "../../harness/session-runtime-ownership.js";
 import { assertPluginHarnessConversationToolPolicySupport } from "../../harness/support.js";
 import type { AgentHarness } from "../../harness/types.js";

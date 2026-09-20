@@ -15,12 +15,14 @@ export {
   ModelChoiceSchema,
   ModelRuntimeChoiceSchema,
   ModelCatalogProviderOutcomeSchema,
+  ModelsListParamsSchema,
   ModelsListResultSchema,
 } from "./model-catalog.js";
 export type {
   ModelChoice,
   ModelRuntimeChoice,
   ModelCatalogProviderOutcome,
+  ModelsListParams,
   ModelsListResult,
 } from "./model-catalog.js";
 
