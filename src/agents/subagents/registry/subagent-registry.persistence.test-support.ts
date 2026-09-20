@@ -68,6 +68,7 @@ export function gateSubagentRequesterSettlement(
 /** Gates owned by a test must be released before waiting for imports and detached tails. */
 export async function settleSubagentRegistryPersistenceWork() {
   await vi.dynamicImportSettled();
+  // Accepted task events can outlive both reset and synchronous task reads.
   await captureTaskRegistryReadFence(captureOpenClawStateWorkerContext().admission);
   await vi.waitFor(() => {
     const holders = getActiveGatewayRootWorkHolders();
