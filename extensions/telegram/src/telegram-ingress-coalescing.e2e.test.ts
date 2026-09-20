@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS } from "openclaw/plugin-sdk/channel-outbound";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
@@ -16,6 +17,7 @@ import {
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import { telegramBotInfoForTest } from "./bot.create-telegram-bot.test-support.js";
@@ -29,6 +31,7 @@ const downstreamTurns = vi.hoisted(() =>
     counts: { block: 0, final: 0, tool: 0 },
   })),
 );
+const runtimeErrors: unknown[] = [];
 
 vi.mock("./fetch.js", () => ({
   resolveTelegramApiBase: (apiRoot?: string) => apiRoot ?? "https://api.telegram.org",
@@ -56,7 +59,7 @@ vi.mock("./telegram-media.runtime.js", async (importOriginal) => {
   return {
     ...actual,
     saveRemoteMedia: async (params: { filePathHint?: string }) => ({
-      id: params.filePathHint ?? "photo",
+      id: path.basename(params.filePathHint ?? "photo.jpg"),
       path: `/tmp/${path.basename(params.filePathHint ?? "photo.jpg")}`,
       size: 4,
       contentType: "image/jpeg",
@@ -199,7 +202,7 @@ function createTelegramDeps(stateDir: string): TelegramBotDeps {
 async function awaitSingleDownstreamTurn(): Promise<MsgContext & Record<string, unknown>> {
   await vi.waitFor(
     () => {
-      expect(downstreamTurns).toHaveBeenCalledTimes(1);
+      expect(downstreamTurns, runtimeErrors.map(String).join("\n")).toHaveBeenCalledTimes(1);
     },
     { timeout: 5_000, interval: 5 },
   );
@@ -208,10 +211,8 @@ async function awaitSingleDownstreamTurn(): Promise<MsgContext & Record<string, 
 
 async function assertSpoolTombstoned(params: { spoolDir: string; updateIds: number[] }) {
   const queue = openTelegramIngressQueue(params.spoolDir);
-  await vi.waitFor(async () => {
-    expect(await queue.listClaims()).toEqual([]);
-    expect(await queue.listPending({ limit: "all" })).toEqual([]);
-  });
+  expect(await queue.listClaims()).toEqual([]);
+  expect(await queue.listPending({ limit: "all" })).toEqual([]);
   // Every member tombstones independently, so a replayed update cannot re-enter.
   for (const updateId of params.updateIds) {
     await expect(queue.enqueue(telegramQueueEventId(updateId), {} as never)).resolves.toMatchObject(
@@ -220,13 +221,18 @@ async function assertSpoolTombstoned(params: { spoolDir: string; updateIds: numb
   }
 }
 
-async function assertAlbumTurnAndTombstones(params: { spoolDir: string; updateIds: number[] }) {
+async function assertAlbumTurnAndTombstones(params: {
+  spoolDir: string;
+  updateIds: number[];
+  monitor: ReturnType<typeof createTelegramTransportIngressMonitor>;
+}) {
   const turn = await awaitSingleDownstreamTurn();
   expect(turn.Body).toContain("Two photo album");
   expect(turn.media).toMatchObject([
     { path: "/tmp/photo-1.jpg", kind: "image" },
     { path: "/tmp/photo-2.jpg", kind: "image" },
   ]);
+  await params.monitor.waitForDeferredClaims();
   await assertSpoolTombstoned(params);
 }
 
@@ -245,6 +251,7 @@ describe("Telegram durable ingress coalescing", () => {
     process.env.OPENCLAW_STATE_DIR = stateDir;
     spoolDir = path.join(stateDir, "telegram", "ingress-spool-default");
     activeResources = [];
+    runtimeErrors.length = 0;
     downstreamTurns
       .mockReset()
       .mockResolvedValue({ queuedFinal: false, counts: { block: 0, final: 0, tool: 0 } });
@@ -264,7 +271,7 @@ describe("Telegram durable ingress coalescing", () => {
             options,
           )) as TelegramRuntime["state"]["openKeyedStore"],
       },
-      channel: {},
+      channel: { inbound: { ingress: createPluginRuntimeMock().channel.inbound.ingress } },
     } as TelegramRuntime);
   });
 
@@ -277,6 +284,7 @@ describe("Telegram durable ingress coalescing", () => {
         await telegramTransport.close();
       }),
     );
+    await closeOpenClawStateDatabaseAsync();
     closeOpenClawStateDatabaseForTest();
     resetPluginStateStoreForTests({ closeDatabase: false });
     if (originalStateDir === undefined) {
@@ -310,6 +318,7 @@ describe("Telegram durable ingress coalescing", () => {
         error:
           options.onRuntimeError ??
           ((error) => {
+            runtimeErrors.push(error);
             throw error instanceof Error ? error : new Error(String(error));
           }),
         getRuntimeConfig: () => cfg,
@@ -344,7 +353,7 @@ describe("Telegram durable ingress coalescing", () => {
       setTimeout(resolve, 5);
     });
     await monitor.admit(second);
-    await assertAlbumTurnAndTombstones({ spoolDir, updateIds: [101, 102] });
+    await assertAlbumTurnAndTombstones({ spoolDir, updateIds: [101, 102], monitor });
 
     await monitor.stop();
     await telegramTransport.close();
@@ -358,7 +367,7 @@ describe("Telegram durable ingress coalescing", () => {
     const { monitor, telegramTransport } = await createMonitor();
 
     monitor.start();
-    await assertAlbumTurnAndTombstones({ spoolDir, updateIds: [201, 202] });
+    await assertAlbumTurnAndTombstones({ spoolDir, updateIds: [201, 202], monitor });
 
     await monitor.stop();
     await telegramTransport.close();
@@ -513,6 +522,7 @@ describe("Telegram durable ingress coalescing", () => {
     const turn = await awaitSingleDownstreamTurn();
     expect(turn.Body).toContain("First note");
     expect(turn.Body).toContain("Second note");
+    await monitor.waitForDeferredClaims();
     await assertSpoolTombstoned({ spoolDir, updateIds: [301, 302] });
 
     await monitor.stop();
@@ -566,6 +576,7 @@ describe("Telegram durable ingress coalescing", () => {
       },
       { timeout: 5_000, interval: 5 },
     );
+    await monitor.waitForDeferredClaims();
     await assertSpoolTombstoned({ spoolDir, updateIds });
 
     await monitor.stop();
@@ -587,6 +598,7 @@ describe("Telegram durable ingress coalescing", () => {
     const turn = await awaitSingleDownstreamTurn();
     expect(turn.Body).toContain("First note");
     expect(turn.Body).toContain("Second note");
+    await monitor.waitForDeferredClaims();
     await assertSpoolTombstoned({ spoolDir, updateIds: [401, 402] });
 
     await monitor.stop();

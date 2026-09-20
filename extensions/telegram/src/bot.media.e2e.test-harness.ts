@@ -2,6 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   createPluginStateKeyedStoreForTests,
@@ -14,6 +15,7 @@ import {
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { finalizeInboundContext, resetInboundDedupe } from "openclaw/plugin-sdk/reply-runtime";
 import type { GetReplyOptions, MsgContext } from "openclaw/plugin-sdk/reply-runtime";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, vi, type Mock } from "vitest";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import { runTelegramChannelInboundEventWithHarness } from "./bot.test-helpers.js";
@@ -153,7 +155,7 @@ function installTopicNameRuntimeForTest(): void {
           options,
         )) as TelegramRuntime["state"]["openKeyedStore"],
     },
-    channel: {},
+    channel: { inbound: { ingress: createPluginRuntimeMock().channel.inbound.ingress } },
   } as TelegramRuntime);
 }
 
@@ -295,7 +297,8 @@ beforeEach(() => {
   resetReadRemoteMediaBufferMock();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeOpenClawStateDatabaseAsync();
   resetPluginRuntimeStateForTest();
   resetPluginStateStoreForTests();
   if (originalStateDir === undefined) {
