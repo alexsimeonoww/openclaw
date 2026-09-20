@@ -5,7 +5,9 @@ import { ABSOLUTE_DEADLINE_EXPIRED, awaitWithinDeadline } from "../utils/absolut
 
 export const GATEWAY_UPDATE_EXECUTOR_CONTRACT = "root-spawner-v1";
 
-const owners = new AsyncLocalStorage<{ assertCurrent: () => void; originalRoot?: string }>();
+const owners = new AsyncLocalStorage<
+  { assertCurrent: () => void; originalRoot?: string } | undefined
+>();
 export type GatewayServiceNativeCommand = (
   argv: string[],
   options: CommandOptions,
@@ -26,6 +28,7 @@ export async function withGatewayServiceUpdateAuthority<T>(
   originalRoot?: string,
   nativeCommand?: GatewayServiceNativeCommand,
 ): Promise<T> {
+  const parent = owners.getStore();
   let active = true;
   let accepting = true;
   let tail: Promise<unknown> = Promise.resolve();
@@ -34,7 +37,11 @@ export async function withGatewayServiceUpdateAuthority<T>(
     if (!active) {
       throw new Error("Update-owned native command has closed.");
     }
-    assertOwner();
+    // Native lock guards consult this owner too; retain their original context.
+    owners.run(parent, () => {
+      parent?.assertCurrent();
+      assertOwner();
+    });
   };
   assertCurrent();
   if (nativeCommand) {
@@ -88,37 +95,40 @@ export async function withGatewayServiceUpdateAuthority<T>(
     });
   }
   try {
-    return await owners.run({ assertCurrent, originalRoot }, async () => {
-      if (!nativeCommand) {
-        const result = await operation();
-        assertCurrent();
-        return result;
-      }
-      const [outcome] = await Promise.allSettled([Promise.resolve().then(operation)]);
-      accepting = false;
-      if (outcome.status === "rejected") {
-        active = false;
-      }
-      const failures: unknown[] = [];
-      while (pending.size) {
-        for (const settlement of await Promise.allSettled(pending)) {
-          if (settlement.status === "rejected") {
-            failures.push(settlement.reason);
+    return await owners.run(
+      { assertCurrent, originalRoot: parent?.originalRoot ?? originalRoot },
+      async () => {
+        if (!nativeCommand) {
+          const result = await operation();
+          assertCurrent();
+          return result;
+        }
+        const [outcome] = await Promise.allSettled([Promise.resolve().then(operation)]);
+        accepting = false;
+        if (outcome.status === "rejected") {
+          active = false;
+        }
+        const failures: unknown[] = [];
+        while (pending.size) {
+          for (const settlement of await Promise.allSettled(pending)) {
+            if (settlement.status === "rejected") {
+              failures.push(settlement.reason);
+            }
           }
         }
-      }
-      if (failures.length) {
-        throw new AggregateError(
-          outcome.status === "rejected" ? [outcome.reason, ...failures] : failures,
-          "Native command scope did not settle successfully.",
-        );
-      }
-      if (outcome.status === "rejected") {
-        throw outcome.reason;
-      }
-      assertCurrent();
-      return outcome.value;
-    });
+        if (failures.length) {
+          throw new AggregateError(
+            outcome.status === "rejected" ? [outcome.reason, ...failures] : failures,
+            "Native command scope did not settle successfully.",
+          );
+        }
+        if (outcome.status === "rejected") {
+          throw outcome.reason;
+        }
+        assertCurrent();
+        return outcome.value;
+      },
+    );
   } finally {
     accepting = false;
     active = false;

@@ -3,6 +3,7 @@ import type {
   maybeStopManagedServiceBeforeMutableUpdate,
   PreManagedServiceStop,
 } from "../cli/update-cli/update-command-service-maintenance.js";
+import { GatewayServiceStopUnsafeError } from "../daemon/service-inspection-error.js";
 import type { GatewayService, readGatewayServiceState } from "../daemon/service.js";
 import { collectNestedErrorCandidates } from "../infra/error-graph-internal.js";
 import { hasCommandProcessCleanupError } from "../process/exec-result.js";
@@ -168,6 +169,23 @@ function begin() {
     runtime: { log: boundary.log, error: vi.fn(), exit: vi.fn() },
   });
 }
+
+it("does not suggest an unsafe manual stop after a reported write-custody refusal", async () => {
+  const refusal = new GatewayServiceStopUnsafeError(
+    "Gateway maintenance stop refused: data at risk in owner phase migration (1).",
+  );
+  boundary.stop.mockImplementation(async (params) => {
+    if (params.phase === "inspect") {
+      return { ...stopped, stopped: false, running: true, offline: false };
+    }
+    throw refusal;
+  });
+  const error = await begin().catch((reason: unknown) => reason);
+  expect(error).toBeInstanceOf(Error);
+  expect(String(error)).toContain(refusal.message);
+  expect(String(error)).not.toContain("Stop the Gateway service and other OpenClaw processes");
+  expect(boundary.restart).not.toHaveBeenCalled();
+});
 
 it("leaves a progressing Gateway running and warns after the readiness cap", async () => {
   boundary.health.mockResolvedValue({

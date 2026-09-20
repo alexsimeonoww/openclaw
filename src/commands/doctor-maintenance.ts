@@ -4,6 +4,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { PreManagedServiceStop } from "../cli/update-cli/update-command-service-maintenance.js";
 import { isDefaultInstallIdentity, resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { GatewayServiceStopUnsafeError } from "../daemon/service-inspection-error.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { assertLegacyGatewayStoppedForMaintenance } from "../infra/gateway-lock-legacy.js";
 import { readActiveGatewayLockIdentity } from "../infra/gateway-lock.js";
@@ -412,6 +413,10 @@ export async function beginDoctorMaintenance(params: {
                 jsonMode: true,
                 expectedService: inspection,
                 assertCurrent: assertUpdateAdmissionCurrent,
+                warn: (message) => {
+                  warnings.push(message);
+                  params.runtime.log(message);
+                },
                 onStopped: (before) => {
                   stopped = before;
                 },
@@ -503,7 +508,7 @@ export async function beginDoctorMaintenance(params: {
       throw error;
     }
     const refusal = new Error(
-      `Doctor could not enter maintenance. ${String(error)}${parentMustStopGateway ? "" : ` Stop the Gateway service and other OpenClaw processes using this state, then run ${formatCliCommand("openclaw doctor --fix", env)} from an independent shell.`}`,
+      `Doctor could not enter maintenance. ${String(error)}${parentMustStopGateway || error instanceof GatewayServiceStopUnsafeError ? "" : ` Stop the Gateway service and other OpenClaw processes using this state, then run ${formatCliCommand("openclaw doctor --fix", env)} from an independent shell.`}`,
       { cause: error },
     );
     const recovery = inspectingActivation
