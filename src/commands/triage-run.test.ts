@@ -226,64 +226,111 @@ describe("triage --run", () => {
       withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true })),
     ).rejects.toMatchObject({ code: 1 });
     expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringMatching(/Embedded repair unrepaired: .*Cannot establish the update target\./),
+      expect.stringMatching(/Embedded repair unrepaired: .*Update history is unavailable/),
     );
     expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("openclaw update repair"));
     expect(mocks.runUpdateRepairTurn).not.toHaveBeenCalled();
   });
 
-  it.each(["preview", "acknowledged abandonment"])(
-    "preserves recorded resolution behind a newer %s",
-    async (newer) => {
-      let now = Date.now();
-      vi.spyOn(Date, "now").mockImplementation(() => now++);
-      const version = await readPackageVersion(path.resolve(import.meta.dirname, "../.."));
-      if (!version) {
-        throw new Error("Fixture installation version missing");
-      }
-      const target = { kind: "package" as const, version };
-      const failed = createUpdateRun({ trigger: "cli", target });
-      finishUpdateRun(failed.runId, { status: "failed", reason: "finalize:doctor" });
-      const completed = createUpdateRun({ trigger: "cli", target });
-      finishUpdateRun(completed.runId, { status: "succeeded", after: { version } });
-      const extra = createUpdateRun({ trigger: "cli", preview: newer === "preview" });
-      finishUpdateRun(extra.runId, {
-        status: newer === "preview" ? "skipped" : "failed",
-        reason: newer === "preview" ? "dry-run" : "abandoned",
-      });
-      if (newer !== "preview") {
-        acknowledgeAbandonedUpdateRun(extra.runId);
-      }
-      const packages = await import("../infra/update-global.js");
-      const inventory = await import("../infra/package-dist-inventory.js");
-      const probe = await import("../cli/daemon-cli/restart-health-probe.js");
-      const verification = await import("../cli/update-cli/update-command-verification.js");
-      vi.spyOn(packages, "collectInstalledGlobalPackageErrors").mockResolvedValue([]);
-      vi.spyOn(inventory, "collectPackageDistContentInventoryErrors").mockResolvedValue([]);
-      vi.spyOn(probe, "resolveGatewayRestartProbeContext").mockResolvedValue({
-        config: {},
-        auth: undefined,
-      });
-      const verified = vi
-        .spyOn(verification, "verifyPreviousGatewayForUpdate")
-        .mockResolvedValue(true);
-      const real = await vi.importActual<typeof import("../infra/update-repair-agent.js")>(
-        "../infra/update-repair-agent.js",
+  it.each([
+    "preview",
+    "acknowledged abandonment",
+    "upgrade",
+    "upgrade with generic failure",
+    "upgrade from git",
+    "explicit upgrade",
+  ])("preserves recorded resolution behind a newer %s", async (newer) => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now++);
+    const version = await readPackageVersion(path.resolve(import.meta.dirname, "../.."));
+    if (!version) {
+      throw new Error("Fixture installation version missing");
+    }
+    const upgrade = newer.includes("upgrade");
+    const target = {
+      kind: newer === "upgrade from git" ? ("git" as const) : ("package" as const),
+      version: upgrade ? "2026.9.1" : version,
+    };
+    const failed = createUpdateRun({ trigger: "cli", target });
+    finishUpdateRun(failed.runId, {
+      status: "failed",
+      reason: newer === "upgrade with generic failure" ? "update-failed" : "finalize:doctor",
+    });
+    const completed = createUpdateRun({ trigger: "cli", target });
+    finishUpdateRun(completed.runId, { status: "succeeded", after: { version: target.version } });
+    const extra = createUpdateRun({
+      trigger: "cli",
+      preview: newer === "preview",
+      ...(upgrade ? { target: { kind: "package", version } } : {}),
+    });
+    finishUpdateRun(extra.runId, {
+      status: upgrade ? "succeeded" : newer === "preview" ? "skipped" : "failed",
+      ...(upgrade
+        ? { after: { version } }
+        : { reason: newer === "preview" ? "dry-run" : "abandoned" }),
+    });
+    if (newer === "acknowledged abandonment") {
+      acknowledgeAbandonedUpdateRun(extra.runId);
+    }
+    const packages = await import("../infra/update-global.js");
+    const inventory = await import("../infra/package-dist-inventory.js");
+    const probe = await import("../cli/daemon-cli/restart-health-probe.js");
+    const verification = await import("../cli/update-cli/update-command-verification.js");
+    vi.spyOn(packages, "collectInstalledGlobalPackageErrors").mockResolvedValue([]);
+    vi.spyOn(inventory, "collectPackageDistContentInventoryErrors").mockResolvedValue([]);
+    vi.spyOn(probe, "resolveGatewayRestartProbeContext").mockResolvedValue({
+      config: {},
+      auth: undefined,
+    });
+    const verified = vi
+      .spyOn(verification, "verifyPreviousGatewayForUpdate")
+      .mockResolvedValue(true);
+    const real = await vi.importActual<typeof import("../infra/update-repair-agent.js")>(
+      "../infra/update-repair-agent.js",
+    );
+    mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
+    const runtime = createTriageRuntime();
+    let updateResult: string | undefined;
+    if (newer === "explicit upgrade") {
+      updateResult = path.join(stateDir, "explicit-failure.json");
+      await fs.writeFile(
+        updateResult,
+        JSON.stringify({
+          result: {
+            runId: failed.runId,
+            status: "error",
+            mode: "npm",
+            reason: "finalize:doctor",
+            steps: [],
+          },
+        }),
       );
-      mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
-      const runtime = createTriageRuntime();
-      await withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true }));
-      expect(runtime.log).toHaveBeenCalledWith(
-        expect.stringContaining("Embedded repair already resolved: Update to"),
-      );
-      expect(verified).toHaveBeenCalledOnce();
-      expect(getUpdateRun(failed.runId)?.status).toBe("failed");
-    },
-  );
+    }
+    const command = withTriageTerminal(true, () =>
+      triageCommand(runtime, { run: true, noExport: true, updateResult }),
+    );
+    if (updateResult) {
+      await expect(command).rejects.toMatchObject({ code: 1 });
+      expect(verified).not.toHaveBeenCalled();
+      return;
+    }
+    await command;
+    expect(runtime.log).toHaveBeenCalledWith(
+      expect.stringContaining("Embedded repair already resolved: Update to"),
+    );
+    expect(verified).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ expectedVersion: version }),
+    );
+    expect(getUpdateRun(failed.runId)?.status).toBe("failed");
+  });
 
-  it.each([false, true])(
-    "honors the abandoned run's own repair acknowledgement (notification: %s)",
-    async (notification) => {
+  it.each([
+    { notification: false, doctorErrors: false },
+    { notification: true, doctorErrors: false },
+    { notification: true, doctorErrors: true },
+  ])(
+    "honors abandonment without hiding current Doctor errors (notification: $notification, errors: $doctorErrors)",
+    async ({ notification, doctorErrors }) => {
       const run = createUpdateRun({ trigger: "cli" });
       finishUpdateRun(run.runId, { status: "failed", reason: "abandoned" });
       acknowledgeAbandonedUpdateRun(run.runId);
@@ -299,8 +346,28 @@ describe("triage --run", () => {
         "../infra/update-repair-agent.js",
       );
       mocks.runUpdateRepairLoop.mockImplementation(real.runUpdateRepairLoop);
+      if (doctorErrors) {
+        mocks.runUtf8CommandWithTimeout.mockResolvedValue({
+          code: 1,
+          termination: "exit",
+          stdout: JSON.stringify({
+            ok: false,
+            findings: [{ severity: "error", message: "Current configuration is invalid." }],
+          }),
+        });
+      }
       const runtime = createTriageRuntime();
-      await withTriageTerminal(true, () => triageCommand(runtime, { run: true, noExport: true }));
+      const command = withTriageTerminal(true, () =>
+        triageCommand(runtime, { run: true, noExport: true }),
+      );
+      if (doctorErrors) {
+        await expect(command).rejects.toMatchObject({ code: 1 });
+        const output = runtime.log.mock.calls.flat().join("\n");
+        expect(output).toContain("Current configuration is invalid.");
+        expect(output).not.toContain("already resolved");
+        return;
+      }
+      await command;
       expect(runtime.log).toHaveBeenCalledWith(
         expect.stringContaining("Embedded repair already resolved:"),
       );

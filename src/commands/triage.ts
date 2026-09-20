@@ -603,24 +603,16 @@ export async function triageCommand(
           const { validateTriageDoctor } = await import("./triage-doctor.js");
           return validateTriageDoctor({ installRoot, env: targetEnv, signal, redaction });
         };
-        const { validateTriageUpdateResolution, validateTriagePendingMigrations } =
+        const { validateTriageUpdateResolution } =
           await import("../infra/update-triage-resolution.js");
-        let resolution: UpdateRepairValidation;
-        if (updateFailure) {
-          resolution = await validateTriageUpdateResolution({
-            failure: updateFailure,
-            installRoot,
-            env: targetEnv,
-            signal,
-            validateDoctor,
-          });
-        } else {
-          resolution = validateTriagePendingMigrations(targetEnv) ?? (await validateDoctor());
-          signal.throwIfAborted();
-          if (resolution.ok) {
-            resolution = validateTriagePendingMigrations(targetEnv) ?? resolution;
-          }
-        }
+        const resolution = await validateTriageUpdateResolution({
+          failure: updateFailure,
+          implicit: !options.updateResult && !options.recovery,
+          installRoot,
+          env: targetEnv,
+          signal,
+          validateDoctor,
+        });
         return {
           ...resolution,
           summary: triageCollectionError(resolution.summary, redaction),
