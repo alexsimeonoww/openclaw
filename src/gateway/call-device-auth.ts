@@ -8,11 +8,29 @@ import {
   loadOriginDeviceToken,
   loadOriginDeviceTokenReadOnly,
 } from "../infra/device-auth-store.js";
-import type { DeviceIdentity } from "../infra/device-identity.js";
+import {
+  loadDeviceIdentityIfPresent,
+  loadOrCreateDeviceIdentity,
+  type DeviceIdentity,
+} from "../infra/device-identity.js";
 import type { DeviceAuthEntry } from "../shared/device-auth.js";
 import type { resolveGatewayAuth } from "./auth-resolve.js";
 import type { GatewayClientOptions } from "./client.js";
 import { isLoopbackGatewayUrl } from "./net.js";
+
+export function resolveDeviceIdentityForGatewayCall(
+  sharedStateMode?: "read-only",
+): DeviceIdentity | null {
+  try {
+    return sharedStateMode === "read-only"
+      ? loadDeviceIdentityIfPresent()
+      : loadOrCreateDeviceIdentity();
+  } catch {
+    // Read-only or restricted environments should still be able to call the
+    // gateway with token/password auth without crashing before the RPC.
+    return null;
+  }
+}
 
 export function shouldOmitDeviceIdentityForGatewayCall(params: {
   opts: Pick<GatewayClientOptions, "mode" | "clientName">;
