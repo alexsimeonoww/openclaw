@@ -7,12 +7,6 @@ import { subagentRuns } from "../agents/subagents/registry/subagent-registry-mem
 import { settleRequesterTurnAfterSessionSpawns } from "../agents/subagents/registry/subagent-registry-requester-yield.js";
 import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import { createSubagentsTool } from "../agents/tools/subagents-tool.js";
-import {
-  createGatewayMethodRegistry,
-  createCoreGatewayMethodDescriptors,
-} from "../gateway/methods/registry.js";
-import { handleGatewayRequest, coreGatewayHandlers } from "../gateway/server-methods.js";
-import type { GatewayClient, GatewayRequestContext } from "../gateway/server-methods/types.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
 import {
@@ -32,6 +26,7 @@ import {
   resolveManagedTaskBackingDetail,
 } from "./task-backing-authority.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
+import { completeTaskRunByRunIdCore } from "./task-executor.js";
 import { createManagedTaskFlow, createTaskFlowForTask } from "./task-flow-registry.js";
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import { taskAgentEventMutations } from "./task-registry-agent-events.js";
@@ -43,6 +38,7 @@ import {
   listFreshTasksForOwnerKey,
 } from "./task-registry-query.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
+import { requestTasks } from "./task-registry-read.test-support.js";
 import { linkTaskToFlowById } from "./task-registry-record-api.js";
 import { tasks, taskProgressBatches } from "./task-registry-state.js";
 import {
@@ -99,40 +95,6 @@ function createReadTask(runId: string) {
     notifyPolicy: "silent",
     deliveryStatus: "not_applicable",
   });
-}
-
-async function requestTasks(ownerKey: string, respond = vi.fn()) {
-  const client: GatewayClient = {
-    connId: "task-read-fixture",
-    connect: {
-      minProtocol: 1,
-      maxProtocol: 1,
-      client: {
-        id: "openclaw-control-ui",
-        version: "test",
-        platform: "test",
-        mode: "webchat",
-      },
-      role: "operator",
-      scopes: ["operator.read"],
-    },
-  };
-  await handleGatewayRequest({
-    req: {
-      type: "req",
-      id: "task-read",
-      method: "tasks.list",
-      params: { limit: 5, sessionKey: ownerKey },
-    },
-    client,
-    context: { getRuntimeConfig: () => ({}) } as GatewayRequestContext,
-    methodRegistry: createGatewayMethodRegistry(
-      createCoreGatewayMethodDescriptors(coreGatewayHandlers),
-    ),
-    isWebchatConnect: () => false,
-    respond,
-  });
-  return respond;
 }
 
 function createReadProgressBatch() {
@@ -502,48 +464,73 @@ describe("task registry read preparation", () => {
         }
         return result;
       });
-      const immediate = timers.setImmediate;
-      vi.mocked(timers.setImmediate).mockImplementationOnce(async (...args) => {
-        await immediate(...args);
-        await committed.promise;
+      const reader = await import("./task-registry-read.js");
+      const prepare = reader.prepareTaskRegistryRead;
+      // Preparatory yields must not consume the scan's publication barrier.
+      vi.spyOn(reader, "prepareTaskRegistryRead").mockImplementationOnce(async () => {
+        await timers.setImmediate();
+        return prepare();
       });
+      const immediate = timers.setImmediate;
       let workMs = 0;
       vi.spyOn(performance, "now").mockImplementation(() => workMs);
       let mutation: Promise<unknown> | undefined;
+      let page: ReturnType<typeof listTaskRecordPage> | undefined;
       let selectedBeforeMutation = false;
+      const failures: unknown[] = [];
+      const recordFailure = (error: unknown) => {
+        if (!failures.includes(error)) {
+          failures.push(error);
+        }
+      };
       try {
-        const page = await withTestTimeout(
-          listTaskRecordPage({
-            offset: 0,
-            limit: 1,
-            prepareFilter: (batch) => {
-              workMs += 20;
-              if (!mutation) {
-                selectedBeforeMutation = batch.some((task) => task.taskId === selected.taskId);
-                mutation = createRunningTaskRunCoreWithReceiptAsync({
-                  runtime: selected.runtime,
-                  runId: selected.runId!,
-                  task: selected.task,
-                  ownerKey: selected.ownerKey,
-                  scopeKind: selected.scopeKind,
-                  requesterSessionKey: selected.requesterSessionKey,
-                  notifyPolicy: "silent",
-                  deliveryStatus: "not_applicable",
-                  detail: { historyGeneration: "replacement" },
-                });
-              }
-              return (task) => task.taskId === selected.taskId;
-            },
-          }),
+        page = listTaskRecordPage({
+          offset: 0,
+          limit: 1,
+          prepareFilter: (batch) => {
+            workMs += 20;
+            if (!mutation) {
+              selectedBeforeMutation = batch.some((task) => task.taskId === selected.taskId);
+              mutation = createRunningTaskRunCoreWithReceiptAsync({
+                runtime: selected.runtime,
+                runId: selected.runId!,
+                task: selected.task,
+                ownerKey: selected.ownerKey,
+                scopeKind: selected.scopeKind,
+                requesterSessionKey: selected.requesterSessionKey,
+                notifyPolicy: "silent",
+                deliveryStatus: "not_applicable",
+                detail: { historyGeneration: "replacement" },
+              });
+              vi.mocked(timers.setImmediate).mockImplementationOnce(async (...args) => {
+                await immediate(...args);
+                await committed.promise;
+              });
+            }
+            return (task) => task.taskId === selected.taskId;
+          },
+        });
+        const result = await withTestTimeout(
+          page,
           5_000,
           "Page joined an identity-changing publication",
         );
         expect(selectedBeforeMutation).toBe(true);
         expect(held).toBe(true);
-        expect(page).toEqual({ ok: false, error: "registry_changed" });
+        expect(result).toEqual({ ok: false, error: "registry_changed" });
+      } catch (error) {
+        recordFailure(error);
       } finally {
+        committed.resolve();
         release.resolve();
-        await mutation;
+        await page?.catch(recordFailure);
+        await mutation?.catch(recordFailure);
+      }
+      if (failures.length === 1) {
+        throw failures[0];
+      }
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "Page proof and cleanup failed", { cause: failures[0] });
       }
     });
   });
@@ -631,7 +618,7 @@ describe("task registry read preparation", () => {
     },
   );
 
-  it.each(["terminal", "replacement", "ABA"] as const)(
+  it.each(["replacement", "ABA"] as const)(
     "serves registered tasks.list after a committed event publication loses to %s",
     async (change) => {
       await withReadState(async () => {
@@ -668,15 +655,10 @@ describe("task registry read preparation", () => {
         let read: ReturnType<typeof requestTasks> | undefined;
         try {
           await entered.promise;
-          const newer = updateTask(
-            task.taskId,
-            change === "terminal"
-              ? { status: "succeeded", endedAt: Date.now() }
-              : {
-                  task: "Newer title",
-                  ...(change === "replacement" ? { runId: "successor" } : {}),
-                },
-          );
+          const newer = updateTask(task.taskId, {
+            task: "Newer title",
+            ...(change === "replacement" ? { runId: "successor" } : {}),
+          });
           expect(newer).not.toBeNull();
           if (change === "ABA") {
             expect(updateTask(task.taskId, { task: task.task })).not.toBeNull();
@@ -690,7 +672,7 @@ describe("task registry read preparation", () => {
               tasks: [
                 {
                   id: task.taskId,
-                  status: change === "terminal" ? "completed" : "running",
+                  status: "running",
                   title: change === "replacement" ? "Newer title" : task.task,
                   toolUseCount: 1,
                 },
@@ -698,13 +680,144 @@ describe("task registry read preparation", () => {
             },
           ]);
           expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
-            status: change === "terminal" ? "succeeded" : "running",
+            status: "running",
             task: change === "replacement" ? "Newer title" : task.task,
             toolUseCount: 1,
           });
         } finally {
           release.resolve();
           await read;
+        }
+      });
+    },
+  );
+
+  it.each(["before readback", "during readback"] as const)(
+    "returns the terminal task when accepted metadata publication is superseded %s",
+    async (timing) => {
+      await withReadState(async () => {
+        const entry: SubagentRunRecord = {
+          runId: "metadata-terminal-overlap",
+          childSessionKey: "agent:main:subagent:metadata-terminal-overlap",
+          requesterSessionKey: "agent:main:main",
+          requesterDisplayKey: "main",
+          task: "Finish while task metadata settles",
+          cleanup: "keep",
+          createdAt: Date.now(),
+          generation: 1,
+          execution: { status: "running", startedAt: Date.now() },
+        };
+        subagentRuns.set(entry.runId, entry);
+        const task = createTaskFixture("subagent", {
+          runId: entry.runId,
+          childSessionKey: entry.childSessionKey,
+          requesterSessionKey: entry.requesterSessionKey,
+          task: entry.task,
+          notifyPolicy: "silent",
+          detail: createSubagentTaskBackingDetail(entry.generation!),
+        });
+        const store = getTaskRegistryStore();
+        const mutate = store.runAgentEventMutationAsync.bind(store);
+        const snapshot = store.loadMutationSnapshotAsync.bind(store);
+        const committed = createDeferred<Awaited<ReturnType<typeof mutate>>>();
+        const publicationPaused = createDeferred();
+        const release = createDeferred();
+        let mutationCommitted = false;
+        let readbackHeld = false;
+        const writes = vi
+          .spyOn(store, "runAgentEventMutationAsync")
+          .mockImplementation(async (...args) => {
+            const receipt = await mutate(...args);
+            mutationCommitted = true;
+            committed.resolve(receipt);
+            if (timing === "before readback") {
+              publicationPaused.resolve();
+              await release.promise;
+            }
+            return receipt;
+          });
+        vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation(async (...args) => {
+          const current = await snapshot(...args);
+          if (timing === "during readback" && mutationCommitted && !readbackHeld) {
+            readbackHeld = true;
+            publicationPaused.resolve();
+            await release.promise;
+          }
+          return current;
+        });
+        const captured = createDeferred();
+        const capture = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
+        const published: string[] = [];
+        const stop = onTaskRegistryChange((event) => {
+          if (event?.kind === "upserted" && event.task.taskId === task.taskId) {
+            published.push(event.task.status);
+          }
+        });
+        let read: ReturnType<typeof requestTasks> | undefined;
+        try {
+          emitTool(entry.runId, "accepted-before-completion");
+          const receipt = expectDefined(
+            await withTestTimeout(committed.promise, 5_000, "Metadata did not commit"),
+            "ordinary successful metadata receipt",
+          );
+          expect(receipt.task).toMatchObject({
+            taskId: task.taskId,
+            status: "running",
+            toolUseCount: 1,
+            lastToolName: "accepted-before-completion",
+          });
+          await withTestTimeout(publicationPaused.promise, 5_000, "Publication did not pause");
+          vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementation((...args) => {
+            const fence = capture(...args);
+            captured.resolve();
+            return fence;
+          });
+          read = requestTasks(task.ownerKey);
+          await withTestTimeout(
+            captured.promise,
+            5_000,
+            "Gateway did not capture the accepted fence",
+          );
+          expect(
+            completeTaskRunByRunIdCore({
+              runId: entry.runId,
+              runtime: "subagent",
+              sessionKey: entry.childSessionKey,
+              endedAt: Date.now(),
+              terminalSummary: "Authoritative completion",
+            }),
+          ).toEqual([expect.objectContaining({ taskId: task.taskId, status: "succeeded" })]);
+          release.resolve();
+          expect((await read).mock.calls[0]).toMatchObject([
+            true,
+            {
+              tasks: [
+                {
+                  id: task.taskId,
+                  status: "completed",
+                  toolUseCount: 1,
+                  lastToolName: "accepted-before-completion",
+                },
+              ],
+            },
+          ]);
+          expect(writes).toHaveBeenCalledOnce();
+          expect(published).toEqual(["succeeded"]);
+          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+            runId: entry.runId,
+            childSessionKey: entry.childSessionKey,
+            status: "succeeded",
+            terminalSummary: "Authoritative completion",
+            toolUseCount: 1,
+            lastToolName: "accepted-before-completion",
+          });
+        } finally {
+          release.resolve();
+          try {
+            await read;
+          } finally {
+            stop();
+          }
         }
       });
     },

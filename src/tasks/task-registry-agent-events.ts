@@ -372,11 +372,6 @@ async function persist(pending: PendingEvent): Promise<void> {
           scope,
           admission: context.admission,
           readIdentity: "preserved",
-          assertPublicationOwnerCurrent: () => {
-            if (getTaskFlowRegistryStore() !== flowStore) {
-              throw new Error("Task event publication owners changed");
-            }
-          },
           onPublicationError: (error) => {
             publicationFailure = { error };
           },
@@ -413,7 +408,15 @@ async function persist(pending: PendingEvent): Promise<void> {
               }
               await finishTaskMutation(context, store, flowStore, taskId, {
                 operation: "update",
-                assertCurrent: assertCurrentPublication,
+                assertCurrent: () => {
+                  assertCurrentPublication();
+                  if (
+                    getTaskRegistryStore() !== store ||
+                    getTaskFlowRegistryStore() !== flowStore
+                  ) {
+                    throw new Error("Task event publication owners changed");
+                  }
+                },
               });
               flowEffectsSettled = true;
             }

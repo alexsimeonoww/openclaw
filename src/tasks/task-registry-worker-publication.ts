@@ -29,7 +29,6 @@ export type TaskRegistryWorkerMutationContext = {
   /** Only a producer whose write contract preserves task routing, access, and detail. */
   readIdentity?: "preserved";
   taskRowsWritten?: () => boolean;
-  assertPublicationOwnerCurrent?: () => void;
   beforeObservers?: (assertCurrent: () => void) => Promise<void>;
   recoverPublication?: (snapshot: TaskRegistryStoreSnapshot) => TaskRecord | undefined;
   onPublished?: (task: TaskRecord) => void;
@@ -70,96 +69,30 @@ export function createTaskRegistryPublicationRecovery(
   const witness = { writtenTaskIds: new Set<string>(), replaced: false };
   pending.recoveryWitness = witness;
   let expected: TaskRecord | undefined;
-  let superseded: Error | undefined;
   return {
     begin() {
       witness.writtenTaskIds.clear();
       witness.replaced = false;
     },
-    recover,
-    bindExpected(record: TaskRecord | undefined) {
-      expected = record;
-    },
-    wasSuperseded(error: unknown) {
-      return superseded !== undefined && error === superseded;
+    recover: (snapshot: TaskRegistryStoreSnapshot) => {
+      expected = recover(snapshot);
+      return expected;
     },
     assertCurrent() {
       if (!expected) {
         return;
       }
       const current = getTaskRegistryProcessState().tasks.get(expected.taskId);
-      if (witness.replaced) {
-        throw new Error("Task publication owner was replaced");
-      }
       if (
+        witness.replaced ||
         witness.writtenTaskIds.has(expected.taskId) ||
         !current ||
         !isEquivalentTaskRecord(current, expected)
       ) {
-        superseded ??= new Error("Task publication was superseded by a current write");
-        throw superseded;
+        throw new Error("Task publication was superseded by a current write");
       }
     },
   };
-}
-
-type TaskRegistryPublicationOutcome =
-  | { kind: "published"; conflicted: boolean }
-  | { kind: "superseded" }
-  | { kind: "failed"; error: unknown };
-
-/** Retire stale publication without hiding mutation failures or a replaced runtime owner. */
-export async function settleTaskRegistryWorkerPublication(params: {
-  context: TaskRegistryWorkerMutationContext;
-  pending: PendingTaskRegistryMutation;
-  recovery: ReturnType<typeof createTaskRegistryPublicationRecovery> | undefined;
-  mutationSucceeded: boolean;
-  assertRuntimeOwner: () => void;
-  read: () => Promise<TaskRegistryStoreSnapshot>;
-  install: (snapshot: TaskRegistryStoreSnapshot, records?: ReadonlyMap<string, TaskRecord>) => void;
-  emit: (event: () => TaskRegistryObserverEvent) => void;
-  settle: (outcome: TaskRegistryPublicationOutcome) => void;
-}): Promise<void> {
-  const { context, pending, recovery, mutationSucceeded, assertRuntimeOwner } = params;
-  let outcome: TaskRegistryPublicationOutcome;
-  try {
-    claimTaskRegistryPublication(pending, context.publicationRecords());
-    const assertOwner = () => {
-      assertRuntimeOwner();
-      recovery?.assertCurrent();
-    };
-    const { conflicted } = await reconcileTaskRegistryWorkerSnapshot({
-      pending,
-      assertCurrent: assertOwner,
-      read: params.read,
-      install: params.install,
-      recoverPublication: recovery?.recover,
-      taskRowsWritten: context.taskRowsWritten?.(),
-    });
-    recovery?.bindExpected(pending.publication?.records.get(context.scope.taskId));
-    assertOwner();
-    await context.beforeObservers?.(assertOwner);
-    assertOwner();
-    publishTaskRegistryWorkerMutation({
-      pending,
-      forced: context.forcePublish?.(),
-      emit: params.emit,
-      onPublished: context.onPublished,
-    });
-    outcome = { kind: "published", conflicted };
-  } catch (error) {
-    outcome = { kind: "failed", error };
-    if (mutationSucceeded && recovery?.wasSuperseded(error)) {
-      try {
-        assertRuntimeOwner();
-        outcome = { kind: "superseded" };
-      } catch (ownerError) {
-        outcome = { kind: "failed", error: ownerError };
-      }
-    }
-  }
-  // Observer wake microtasks must see retired mutation state before this promise settles.
-  params.settle(outcome);
 }
 
 /** Preserve committed projection writes, including ABA, without restarting the settled mutation. */
@@ -214,7 +147,7 @@ function mergeTaskRegistryWorkerSnapshot(params: {
 }
 
 /** Order canonical reads and installs, releasing before effects or observers can await descendants. */
-async function reconcileTaskRegistryWorkerSnapshot(params: {
+export async function reconcileTaskRegistryWorkerSnapshot(params: {
   pending: PendingTaskRegistryMutation;
   assertCurrent: () => void;
   read: () => Promise<TaskRegistryStoreSnapshot>;
@@ -286,7 +219,7 @@ async function reconcileTaskRegistryWorkerSnapshot(params: {
 }
 
 /** Keep the original baseline registered while observers may synchronously publish other rows. */
-function publishTaskRegistryWorkerMutation(params: {
+export function publishTaskRegistryWorkerMutation(params: {
   pending: PendingTaskRegistryMutation;
   forced?: TaskRecord;
   emit: (event: () => TaskRegistryObserverEvent) => void;
@@ -345,7 +278,7 @@ function inheritPublicationBaseline(pending: PendingTaskRegistryMutation, taskId
 }
 
 /** Receipt rows own publication; broad snapshot selection grants no readiness for sibling rows. */
-function claimTaskRegistryPublication(
+export function claimTaskRegistryPublication(
   pending: PendingTaskRegistryMutation,
   records: ReadonlyMap<string, TaskRecord>,
 ): void {
@@ -359,7 +292,12 @@ function claimTaskRegistryPublication(
     ready: new Set(),
     invalidated: new Set(),
   };
+  const recovery = pending.recoveryWitness;
   for (const [taskId, record] of pending.publication.records) {
+    // Competing writes can precede the receipt's publication claim.
+    if (recovery?.replaced || recovery?.writtenTaskIds.has(taskId)) {
+      pending.publication.invalidated.add(taskId);
+    }
     const previous = pending.published.get(taskId);
     for (const other of getTaskRegistryProcessState().projection.pending) {
       if (
