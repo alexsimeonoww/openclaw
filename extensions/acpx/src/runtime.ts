@@ -466,21 +466,24 @@ export class AcpxRuntime implements CompleteAcpRuntime {
       },
       list: () => this.agentRegistry.list(),
     };
-    const createDelegate = (nativeTools: boolean) =>
+    const createDelegate = () =>
       new BaseAcpxRuntime(
         {
           ...options,
-          // Admitted host-native harnesses own their tools. Keep ACP permission
-          // requests on the live turn callback, without a second TTY-only fs gate.
-          ...(nativeTools ? { permissionMode: "approve-all" as const } : {}),
           sessionStore: this.sessionStore,
           agentRegistry: this.scopedAgentRegistry,
-          onPermissionRequest: async (request, context) => {
+          sessionPermissions: (context) => {
+            const permissions = options.sessionPermissions?.(context);
             const session = this.sessionScope.getStore();
-            if (nativeTools || session === null || session?.native) {
-              return { outcome: "cancel" };
-            }
-            return await options.onPermissionRequest?.(request, context);
+            return {
+              ...permissions,
+              // Admitted host-native harnesses own their tools. A live turn
+              // approves ACP requests without a second TTY-only filesystem gate.
+              ...(session?.native ? { permissionMode: "approve-all" as const } : {}),
+              ...(session === null || session?.native
+                ? { onPermissionRequest: async () => ({ outcome: "cancel" as const }) }
+                : {}),
+            };
           },
           mcpServers: (context) => {
             const servers =
@@ -525,7 +528,7 @@ export class AcpxRuntime implements CompleteAcpRuntime {
         },
         delegateTestOptions as BaseAcpxRuntimeTestOptions,
       );
-    this.delegate = createDelegate(false);
+    this.delegate = createDelegate();
     this.generationRegistry = new AcpxGenerationRegistry(
       this.sessionStore,
       this.delegate,

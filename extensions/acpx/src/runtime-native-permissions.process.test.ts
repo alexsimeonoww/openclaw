@@ -75,30 +75,41 @@ it("isolates native delegated writes from classic ACP policy without retaining t
         code: "ENOENT",
       });
 
-      await runtime.prepareFreshSession({ handle: native });
-      native = await runtime.ensureSession(nativeTarget);
-      await fs.unlink(path.join(nativeCwd, "native-effect.txt"));
-      const unowned = await prompt({
-        handle: native,
-        text: "Write again without a live native approval owner.",
-        mode: "prompt",
-        requestId: "native-unowned",
-      });
-      expect(unowned).toMatchObject({ status: "completed" });
-      await expect(fs.readFile(path.join(nativeCwd, "native-effect.txt"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      const approved = await prompt({
-        handle: native,
-        text: "Write with a new live native approval.",
-        mode: "prompt",
-        requestId: "native-reapproved",
-        onPermissionRequest: async () => ({ outcome: "allow_once" }),
-      });
-      expect(approved).toMatchObject({ status: "completed" });
-      expect(await fs.readFile(path.join(nativeCwd, "native-effect.txt"), "utf8")).toBe(
-        "approved native effect",
-      );
+      await expect(
+        runtime.ensureSession({ ...nativeTarget, bridgeSession: undefined }),
+      ).rejects.toThrow("tool ownership changed");
+
+      for (const transition of ["retained", "reconnected", "reset"]) {
+        if (transition === "reconnected") {
+          await runtime.close({ handle: native, reason: "reconnect native client" });
+          native = await runtime.ensureSession(nativeTarget);
+        } else if (transition === "reset") {
+          await runtime.prepareFreshSession({ handle: native });
+          native = await runtime.ensureSession(nativeTarget);
+        }
+        await fs.unlink(path.join(nativeCwd, "native-effect.txt"));
+        const unowned = await prompt({
+          handle: native,
+          text: "Write again without a live native approval owner.",
+          mode: "prompt",
+          requestId: `native-unowned-${transition}`,
+        });
+        expect(unowned).toMatchObject({ status: "completed" });
+        await expect(fs.readFile(path.join(nativeCwd, "native-effect.txt"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        const approved = await prompt({
+          handle: native,
+          text: "Write with a new live native approval.",
+          mode: "prompt",
+          requestId: `native-reapproved-${transition}`,
+          onPermissionRequest: async () => ({ outcome: "allow_once" }),
+        });
+        expect(approved).toMatchObject({ status: "completed" });
+        expect(await fs.readFile(path.join(nativeCwd, "native-effect.txt"), "utf8")).toBe(
+          "approved native effect",
+        );
+      }
     } finally {
       await runtime.shutdown();
     }

@@ -1,6 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { inspectAgentModels } from "acpx/runtime";
 import type { AgentHarnessV2 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { finiteSecondsToTimerSafeMilliseconds } from "openclaw/plugin-sdk/number-runtime";
 import type { OpenClawPluginApi, OpenClawPluginServiceContext } from "../runtime-api.js";
+import { resolveAcpxPluginConfig } from "./config.js";
 import { createAcpxAgentRegistry } from "./native-agents.js";
 import type { CompleteAcpRuntime } from "./runtime-proxy.js";
 
@@ -130,33 +132,26 @@ export function createAcpAgentHarness(params: {
       if (inspection?.launch.kind !== "installed") {
         return [];
       }
-      const runtime = await runtimeFor(input.workspaceDir);
-      generation.signal.throwIfAborted();
-      if (!params.isEnabled()) {
-        return [];
-      }
-      const target = {
-        agentId: input.agentId,
-        sessionKey: resource(input.agentId, `catalog:${randomUUID()}`),
-        agent: params.agent,
+      const config = resolveAcpxPluginConfig({
+        rawConfig: params.api.pluginConfig,
+        workspaceDir: input.workspaceDir,
+      });
+      const models = await inspectAgentModels({
         agentCommand: inspection.launch.argv,
-        cwd: input.workspaceDir,
-        mode: "oneshot" as const,
-        bridgeSession: null,
-      };
-      const handle = await runtime.ensureSession(target);
-      try {
-        const status = await runtime.getStatus({ handle, signal: generation.signal });
-        generation.signal.throwIfAborted();
-        return (params.isEnabled() ? (status.models?.availableModels ?? []) : []).map((model) => ({
-          provider: id,
-          id: model.modelId,
-          name: model.name,
-          nativeRuntime: id,
-        }));
-      } finally {
-        await runtime.close({ handle, reason: "catalog-complete" });
-      }
+        cwd: input.workspaceDir ?? config.cwd,
+        signal: generation.signal,
+        timeoutMs:
+          config.timeoutSeconds === undefined
+            ? undefined
+            : (finiteSecondsToTimerSafeMilliseconds(config.timeoutSeconds) ?? 1),
+      });
+      generation.signal.throwIfAborted();
+      return (params.isEnabled() ? (models?.availableModels ?? []) : []).map((model) => ({
+        provider: id,
+        id: model.modelId,
+        name: model.name,
+        nativeRuntime: id,
+      }));
     },
     async runAttempt(input) {
       generation.signal.throwIfAborted();

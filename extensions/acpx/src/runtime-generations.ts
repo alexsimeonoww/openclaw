@@ -18,7 +18,7 @@ export class AcpxGenerationRegistry {
   constructor(
     private readonly sessionStore: Pick<ResetAwareSessionStore, "isFresh" | "markFresh">,
     private readonly delegate: BaseAcpxRuntime,
-    private readonly createDelegate: (nativeTools: boolean) => BaseAcpxRuntime,
+    private readonly createDelegate: () => BaseAcpxRuntime,
   ) {}
 
   get isStopping(): boolean {
@@ -51,10 +51,8 @@ export class AcpxGenerationRegistry {
       throw new AcpRuntimeError("ACP_TURN_FAILED", "ACP session tool ownership changed.");
     }
     if (!generation.delegate) {
-      // Native tools must not inherit classic ACP's client-side approval policy.
-      // Reset successors also need isolation from the prior runtime's queued work.
-      generation.delegate =
-        nativeTools || generation.afterReset ? this.createDelegate(nativeTools) : this.delegate;
+      // Reset successors need isolation from the prior runtime's queued work.
+      generation.delegate = generation.afterReset ? this.createDelegate() : this.delegate;
       generation.nativeTools = nativeTools;
       if (generation.delegate !== this.delegate) {
         this.privateDelegates.add(generation.delegate);
@@ -143,8 +141,8 @@ export class AcpxGenerationRegistry {
       return;
     }
     this.retiringDelegates.add(delegate);
-    // Native and post-reset runtimes belong to one generation. The normal shared
-    // runtime stays service-owned because it may still host unrelated sessions.
+    // Post-reset runtimes belong to one generation. The normal shared runtime
+    // stays service-owned because it may still host unrelated sessions.
     void delegate.shutdown().then(
       () => this.privateDelegates.delete(delegate),
       () => {

@@ -1,7 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { waitForFixtureFile } from "../../test/helpers/process-wait.js";
 import setupPlugin from "./setup-api.js";
 
 const { createAcpxRuntimeServiceMock, tryDispatchAcpReplyHookMock, nativePrograms } = vi.hoisted(
@@ -19,7 +24,11 @@ vi.mock("acpx/agent-registry", async (importActual) => {
       actual.createAgentRegistry({
         ...options,
         resolveExecutable: (command) =>
-          nativePrograms.has(command) ? `/installed/${command}` : undefined,
+          command === process.execPath
+            ? command
+            : nativePrograms.has(command)
+              ? `/installed/${command}`
+              : undefined,
         resolvePackageRoot: () => undefined,
       }),
   };
@@ -258,4 +267,125 @@ describe("acpx plugin", () => {
     expect(config.acp?.allowedAgents).toEqual(["codex"]);
     expect(getRuntime).not.toHaveBeenCalled();
   });
+
+  it.each(["enabled", "disabled", "disposed"] as const)(
+    "inspects a real native catalog without runtime state when the harness becomes %s",
+    async (lifecycle) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "acpx-native-catalog-"));
+      const peerDirectory = path.join(directory, "peer");
+      await fs.mkdir(peerDirectory);
+      const runtimeDirectory = path.join(directory, "runtime");
+      const getRuntime = vi.fn(() => {
+        throw new Error("Catalog inspection must not acquire the runtime");
+      });
+      createAcpxRuntimeServiceMock.mockReturnValue({ id: "acpx", getRuntime });
+      let config: OpenClawPluginApi["config"] = {};
+      const harnesses = new Map<string, Parameters<OpenClawPluginApi["registerAgentHarness"]>[0]>();
+      plugin.register(
+        createTestPluginApi({
+          id: "acpx",
+          config,
+          pluginConfig: {
+            stateDir: runtimeDirectory,
+            timeoutSeconds: 10,
+            agents: {
+              opencode: {
+                command: process.execPath,
+                args: [
+                  fileURLToPath(
+                    new URL("../../test/fixtures/acp/owner-agent.mjs", import.meta.url),
+                  ),
+                  peerDirectory,
+                  "--model-controls",
+                  "--hold-new-session",
+                ],
+              },
+            },
+          },
+          runtime: createPluginRuntimeMock({
+            config: { current: () => config },
+            state: {
+              resolveStateDir: () => {
+                throw new Error("Catalog inspection must not resolve runtime state");
+              },
+              openKeyedStore: () => {
+                throw new Error("Catalog inspection must not open runtime state");
+              },
+            },
+          }),
+          registerAgentHarness: (harness) => {
+            harnesses.set(harness.id, harness);
+          },
+        }),
+      );
+      const harness = harnesses.get("acp-opencode");
+      if (!harness?.loadModelCatalog) {
+        throw new Error("Native catalog operation missing");
+      }
+      const catalog = harness
+        .loadModelCatalog({
+          config,
+          agentId: "main",
+          agentDir: directory,
+          workspaceDir: directory,
+        })
+        .then(
+          (models) => ({ models, error: undefined }),
+          (error: unknown) => ({ models: undefined, error }),
+        );
+      try {
+        await waitForFixtureFile(path.join(peerDirectory, "session-new-entered"), catalog);
+        if (lifecycle === "disabled") {
+          config = {
+            plugins: { entries: { acpx: { config: { nativeAgents: { opencode: false } } } } },
+          };
+        }
+        if (lifecycle === "disposed") {
+          await harness.dispose?.();
+        } else {
+          await fs.writeFile(path.join(peerDirectory, "session-new-release"), "");
+        }
+        const result = await catalog;
+        if (lifecycle === "disposed") {
+          expect(result.error).toMatchObject({ name: "AbortError" });
+          expect(result.models).toBeUndefined();
+        } else {
+          expect(result.error).toBeUndefined();
+          expect(result.models).toEqual(
+            lifecycle === "disabled"
+              ? []
+              : [
+                  {
+                    provider: "acp-opencode",
+                    id: "initial",
+                    name: "Initial",
+                    nativeRuntime: "acp-opencode",
+                  },
+                  {
+                    provider: "acp-opencode",
+                    id: "selected",
+                    name: "Selected",
+                    nativeRuntime: "acp-opencode",
+                  },
+                ],
+          );
+        }
+        const sessionId = await fs.readFile(
+          path.join(peerDirectory, "session-new-entered"),
+          "utf8",
+        );
+        const nativeSession = JSON.parse(
+          await fs.readFile(path.join(peerDirectory, `${sessionId}.json`), "utf8"),
+        ) as { history: string[]; mcpServers: unknown[] };
+        expect(nativeSession.history).toEqual([]);
+        expect(nativeSession.mcpServers).toEqual([]);
+        expect(getRuntime).not.toHaveBeenCalled();
+        await expect(fs.access(runtimeDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await harness.dispose?.();
+        await catalog;
+        await fs.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });
