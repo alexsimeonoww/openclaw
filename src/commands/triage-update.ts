@@ -8,6 +8,7 @@ import { resolveStateDir } from "../config/paths.js";
 import { readFileDescriptorBounded } from "../infra/boundary-file-read.js";
 import { writeTextAtomic } from "../infra/json-files.js";
 import { normalizeUpdateFailureFacts } from "../infra/update-failure-facts.js";
+import type { UpdateRunRecord } from "../infra/update-run-record.js";
 import { UpdateFailureFactSchema } from "../infra/update-run-schema.js";
 import {
   redactSupportString,
@@ -370,11 +371,44 @@ export async function readTriageUpdateFailure(
 export async function readPendingTriageUpdateFailure(
   env: NodeJS.ProcessEnv,
   redaction: SupportRedactionContext,
-): Promise<
-  { failure: TriageUpdateFailure; recordedAtMs: number; correlated: boolean } | undefined
-> {
-  // A pending update notification is evidence only. Do not consume it or create
-  // state while the Gateway is offline; delivery instructions are never projected.
+): Promise<TriageUpdateFailure | undefined> {
+  const { readUpdateRunResolutionHistory } = await import("../infra/update-run-reader.js");
+  let latest: UpdateRunRecord | undefined;
+  try {
+    latest = readUpdateRunResolutionHistory({ env }).failure;
+  } catch (error) {
+    return sanitizeTriageUpdateFailure(
+      {
+        error: `Update history is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      },
+      redaction,
+    );
+  }
+  if (latest) {
+    return sanitizeTriageUpdateFailure(
+      {
+        result: {
+          runId: latest.runId,
+          status: "error",
+          mode: latest.target.kind === "git" ? "git" : "unknown",
+          reason: latest.reason ?? undefined,
+          before: latest.before,
+          after: latest.after,
+          steps: latest.steps
+            .filter((step) => step.status === "failed")
+            .map((step) => ({
+              name: step.step,
+              exitCode: step.exitCode ?? null,
+              stderrTail: step.detail,
+              failureFacts: step.failureFacts,
+            })),
+        },
+      },
+      redaction,
+    );
+  }
+  // Notifications supplement the ledger without consuming delivery instructions
+  // or creating state while the Gateway is offline.
   const { readRestartSentinelReadOnly } = await import("../infra/restart-sentinel.js");
   const sentinel = await readRestartSentinelReadOnly(env);
   if (sentinel?.payload.kind !== "update") {
@@ -388,7 +422,7 @@ export async function readPendingTriageUpdateFailure(
   ) {
     return undefined;
   }
-  const failure = sanitizeTriageUpdateFailure(
+  return sanitizeTriageUpdateFailure(
     {
       result: {
         ...(stats?.runId ? { runId: stats.runId } : {}),
@@ -410,15 +444,4 @@ export async function readPendingTriageUpdateFailure(
     },
     redaction,
   );
-  let correlated = false;
-  if ("result" in failure && failure.result.runId) {
-    try {
-      const { getUpdateRun } = await import("../infra/update-run-reader.js");
-      const run = getUpdateRun(failure.result.runId, { env });
-      correlated = Boolean(run?.target.version || run?.target.sha);
-    } catch {
-      // Unavailable history is uncorrelated evidence, not a failed Doctor check.
-    }
-  }
-  return { failure, recordedAtMs: payload.ts, correlated };
 }
