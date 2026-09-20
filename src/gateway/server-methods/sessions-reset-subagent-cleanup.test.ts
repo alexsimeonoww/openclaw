@@ -1,4 +1,5 @@
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
@@ -49,6 +50,8 @@ import {
 } from "../../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
 import { captureTaskRegistryReadFence } from "../../tasks/task-registry-listener-state.js";
+import { prepareTaskRegistryRead } from "../../tasks/task-registry-read.js";
+import { getTaskRegistryStore } from "../../tasks/task-registry.store.js";
 import { resetTaskRegistryForTests } from "../../tasks/task-registry.test-support.js";
 import { findTaskByRunIdForStatus } from "../../tasks/task-status-access.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
@@ -386,6 +389,41 @@ test.each(["new", "replacement"])(
     }
   },
 );
+
+test("persistence cleanup joins a delayed accepted task write", async () => {
+  const store = getTaskRegistryStore();
+  const mutate = store.runAgentEventMutationAsync.bind(store);
+  const entered = createDeferredCore();
+  const release = createDeferredCore();
+  vi.spyOn(store, "runAgentEventMutationAsync").mockImplementation(async (...args) => {
+    const receipt = await mutate(...args);
+    entered.resolve();
+    await release.promise;
+    return receipt;
+  });
+  startCollector("delayed-task-publication");
+  await entered.promise;
+  let settled = false;
+  const cleanup = settleSubagentRegistryPersistenceWork().then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    (error: unknown) => {
+      settled = true;
+      return error;
+    },
+  );
+  try {
+    // Worker settlement can outlive the old residual-root poll budget on a busy host.
+    await sleep(1_100);
+    expect(settled).toBe(false);
+  } finally {
+    release.resolve();
+    await prepareTaskRegistryRead();
+  }
+  expect(await cleanup).toBeUndefined();
+});
 
 test("a changed session generation skips revocation together with reset", async () => {
   registerAgentHarness({
