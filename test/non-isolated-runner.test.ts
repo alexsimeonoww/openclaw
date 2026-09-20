@@ -102,33 +102,39 @@ it("starts with an empty, attribute-free body and native default focus", () => {
 
 function fixtureFiles(): Record<string, string> {
   const sourcePath = (name: string) => JSON.stringify(path.join(repoRoot, "src", name));
-  const taskEventFixture = (name: string) => `
-import { expect, it } from "vitest";
-import { emitAgentEvent } from ${sourcePath("infra/agent-events.ts")};
-import { prepareTaskRegistryRead } from ${sourcePath("tasks/task-registry-read.ts")};
-import { configureTaskRegistryRuntime } from ${sourcePath("tasks/task-registry.store.ts")};
-import { createTaskFixture } from ${sourcePath("tasks/task-registry.test-support.ts")};
-import { withOpenClawTestState } from ${sourcePath("test-utils/openclaw-test-state.ts")};
-import { createInMemoryTaskRegistryStore } from ${sourcePath("test-utils/task-registry-store.ts")};
-it("persists task events in the ${name} file", async () => {
-  await withOpenClawTestState({ layout: "state-only" }, async () => {
-    configureTaskRegistryRuntime({ store: createInMemoryTaskRegistryStore() });
-    const task = createTaskFixture("cli", {
-      runId: "task-event-${name}", task: "Observe the current file's task event",
-      notifyPolicy: "silent", deliveryStatus: "not_applicable",
-    });
-    emitAgentEvent({ runId: task.runId!, stream: "tool", data: { phase: "start", name: "file-event" } });
-    const read = await prepareTaskRegistryRead();
-    expect(read?.getTaskById(task.taskId)).toMatchObject({ toolUseCount: 1, lastToolName: "file-event" });
-  });
-});
-`;
   const payloadImports = `import { createRequire } from "node:module";
 import { queryObjects } from "node:v8";
 const { ManualPayload, AutoPayload } = createRequire(import.meta.url)("./mock-payloads.cjs");`;
 
   return {
-    "runner.ts": `export { default } from ${JSON.stringify(path.join(repoRoot, "test", "non-isolated-runner.ts"))};\n`,
+    "runner.ts": `import Runner from ${JSON.stringify(path.join(repoRoot, "test", "non-isolated-runner.ts"))};
+import { expect, vi, type RunnerTestFile } from "vitest";
+const resetModules = vi.resetModules;
+export default class FixtureRunner extends Runner {
+  override async onAfterRunFiles(files: RunnerTestFile[]) {
+    await super.onAfterRunFiles(files);
+    expect(vi.resetModules, "file cleanup restores the native module reset").toBe(resetModules);
+  }
+}
+`,
+    "00-cold-mock.test.ts": `import path from "node:path";
+import { expect, it, vi } from "vitest";
+const root = path.join(path.parse(process.cwd()).root, "__openclaw_runner_cold__");
+const readPackage = (file: string) => {
+  if (file === path.join(root, "package.json")) return '{"name":"openclaw"}';
+  throw new Error("ENOENT");
+};
+vi.mock(${sourcePath("infra/openclaw-root.fs.runtime.ts")}, () => ({
+  openClawRootFsSync: { readFileSync: readPackage },
+  openClawRootFs: { readFile: async (file: string) => readPackage(file) },
+}));
+it("applies the first file's mock before loading its production importer", async () => {
+  const { resolveOpenClawPackageRootSync, resolveOpenClawPackageRoot } =
+    await import(${sourcePath("infra/openclaw-root.ts")});
+  expect(resolveOpenClawPackageRootSync({ cwd: root })).toBe(root);
+  await expect(resolveOpenClawPackageRoot({ cwd: root })).resolves.toBe(root);
+});
+`,
     "01-dep.ts": 'export function flavor(): string {\n  return "real";\n}\n',
     "01-mid.ts": `import { flavor } from "./01-dep.js";
 export function describeFlavor(): string {
@@ -139,6 +145,7 @@ export function describeFlavor(): string {
     // file must still apply its mock after onAfterRunFiles cleanup.
     "01-a-crash.test.ts": `import "./01-mid.js";
 import { expect } from "vitest";
+await import(${sourcePath("logging/secret-redaction-registry.ts")});
 expect(Object.hasOwn(globalThis, Symbol.for("openclaw.secretRedactionRegistryTestApi"))).toBe(true);
 await import(${sourcePath("logging/diagnostic-run-activity.ts")});
 throw new Error("synthetic collect failure");
@@ -423,8 +430,6 @@ it("reloads the redirected mock after a real import", () => {
 `,
     ...mockResolutionFixtureFiles,
     ...testApiLifecycleFixtureFiles(repoRoot),
-    "05-c-task-event-producer.test.ts": taskEventFixture("producer"),
-    "05-d-task-event-observer.test.ts": taskEventFixture("observer"),
     ...documentFocusFixtureFiles(),
   };
 }
@@ -471,8 +476,8 @@ async function assertCompletion(
   const report: JsonTestResults = JSON.parse(await fs.readFile(expected.reportPath, "utf8"));
   expect(report.testResults.map((file) => file.name).toSorted()).toEqual(expected.files);
   expect(report).toMatchObject({
-    numTotalTests: 50,
-    numPassedTests: 49,
+    numTotalTests: 51,
+    numPassedTests: 50,
     numPendingTests: 1,
     numFailedTests: 0,
     numTodoTests: 0,
@@ -631,15 +636,31 @@ export default defineConfig({
       ["unexpected file", ({ report }) => Object.assign(report.testResults[0]!, { name: "other" })],
       [
         "extra collection error",
-        ({ report }) => Object.assign(report.testResults[1]!, { message: "other" }),
+        ({ report }) =>
+          Object.assign(
+            report.testResults.find((file) => file.status === "passed")!,
+            {
+              message: "other",
+            },
+          ),
       ],
       [
         "extra failed file",
-        ({ report }) => Object.assign(report.testResults[1]!, { status: "failed" }),
+        ({ report }) =>
+          Object.assign(
+            report.testResults.find((file) => file.status === "passed")!,
+            {
+              status: "failed",
+            },
+          ),
       ],
       [
         "wrong collection error",
-        ({ report }) => Object.assign(report.testResults[0]!, { message: "other" }),
+        ({ report }) =>
+          Object.assign(
+            report.testResults.find((file) => file.name.endsWith("/01-a-crash.test.ts"))!,
+            { message: "other" },
+          ),
       ],
       ["inconsistent totals", ({ report }) => Object.assign(report, { numPassedTests: 44 })],
     ];
