@@ -4,8 +4,7 @@ export const gatewayPluginTestFiles = [
   "test/plugins/crabbox-allocation-authority.gateway.test.ts",
 ];
 
-// This curated cohort retains serial forks and the extended database-worker watchdog,
-// even though ordinary Gateway methods also use forks.
+// Native database consumers retain lifecycle cleanup within each forked process.
 export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/agent-turn/agent-run-dispatch.sqlite.test.ts",
   "src/gateway/chat-display-projection.cron.test.ts",
@@ -88,6 +87,8 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/session-swarm-summary.test.ts",
   "src/gateway/session-utils-store-lookup.test.ts",
   "src/gateway/session-utils.agent-models.test.ts",
+  "src/gateway/session-utils.queued-collector-admission.test.ts",
+  "src/gateway/session-utils.queued-collector.test.ts",
   "src/gateway/session-utils.subagent.test.ts",
   "src/gateway/session-utils.test.ts",
   "src/gateway/setup-inference.first-signin.integration.test.ts",

@@ -654,6 +654,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       credentialAgentLabel: selected ? normalizeAgentLabel(selected) : this.selectedAgentId,
       cards: noSelectableAgents ? [] : this.installedAgents.filterProviders(cards),
       configuredModels: buildSelectableDefaultModels(catalog?.models ?? null, defaults),
+      decisionModels: catalog?.decisionModels ?? [],
       defaultModels: defaults,
       authStatus: data.authStatus,
       automaticUtilityModel: catalog?.defaultModels?.automaticUtilityModel,

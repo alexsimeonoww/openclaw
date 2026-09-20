@@ -6,6 +6,7 @@ import type {
 import { consumeAcpTurnStream } from "openclaw/plugin-sdk/acp-runtime";
 import {
   clearActiveEmbeddedRun,
+  emitAgentEvent,
   resolveBootstrapContextForRun,
   resolveAgentHarnessBeforePromptBuildResult,
   setActiveEmbeddedRun,
@@ -295,6 +296,15 @@ export async function runAcpHarnessAttempt(params: {
               assertActive();
             }
             text += event.text;
+            const update = { stream: "assistant", data: { text, delta: event.text } };
+            emitAgentEvent({
+              runId: input.runId,
+              sessionKey,
+              sessionId: input.sessionId,
+              ...update,
+            });
+            await input.onAgentEvent?.(update);
+            assertActive();
             await input.onPartialReply?.({ text });
           }
         } else {

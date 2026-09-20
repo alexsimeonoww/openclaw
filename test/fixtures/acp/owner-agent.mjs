@@ -11,6 +11,7 @@ const directory = process.argv[2];
 const modelControls = process.argv.slice(3).includes("--model-controls");
 const holdModeControl = process.argv.slice(3).includes("--hold-mode-control");
 const holdNewSession = process.argv.slice(3).includes("--hold-new-session");
+const holdPromptReply = process.argv.slice(3).includes("--hold-prompt-reply");
 const sessions = new Map();
 const configOptions = (state) => [
   {
@@ -143,9 +144,22 @@ const connection = new AgentSideConnection(
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: JSON.stringify({ sessionId, ...state }) },
+          content: {
+            type: "text",
+            text: holdPromptReply ? "First chunk" : JSON.stringify({ sessionId, ...state }),
+          },
         },
       });
+      if (holdPromptReply) {
+        await holdControl("prompt-reply", sessionId);
+        await client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: " second chunk" },
+          },
+        });
+      }
       return { stopReason: "end_turn" };
     },
     async closeSession({ sessionId }) {

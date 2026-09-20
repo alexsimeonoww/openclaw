@@ -10,6 +10,7 @@ import {
   buildKnownAgentRunFailureReplyPayload,
 } from "../../auto-reply/reply/agent-runner-failure-reply.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { onAgentEventForRun, type AgentEventPayload } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { upsertSessionEntry } from "../../plugin-sdk/session-store-runtime.js";
 import {
@@ -144,6 +145,54 @@ it.each(policyCases)(
           expect(await fs.readdir(path.join(native.peerDirectory, "effects"))).toEqual(effects);
         }
       } finally {
+        attempt.close();
+        await native.service.stop?.(native.context);
+      }
+    });
+  },
+  60000,
+);
+
+it.each(["complete", "revoke"] as const)(
+  "publishes native assistant progress before final response and fences late output: %s",
+  async (completion) => {
+    await withOpenClawTestState({ label: "acp-native-stream" }, async (state) => {
+      const config: OpenClawConfig = {
+        session: { store: path.join(state.sessionsDir(), "sessions.json") },
+      };
+      const native = await registerNative(state, config, "owner-agent.mjs", {
+        holdPromptReply: true,
+      });
+      const attempt = await attemptFor(state, config, "opencode", "full");
+      const updates: AgentEventPayload[] = [];
+      const unsubscribe = onAgentEventForRun(attempt.input.runId, (event) => {
+        if (event.stream === "assistant") {
+          updates.push(event);
+        }
+      });
+      let finished = false;
+      const run = runAgentHarnessAttempt(attempt.input).finally(() => {
+        finished = true;
+      });
+      void run.catch(() => {});
+      try {
+        await waitForFixtureFile(path.join(native.peerDirectory, "prompt-reply-entered"), run);
+        await expect.poll(() => updates.at(-1)?.data.text).toBe("First chunk");
+        expect(finished).toBe(false);
+        expect(updates[0]?.sessionKey).toBe(attempt.target.sessionKey);
+        if (completion === "revoke") {
+          attempt.close();
+        }
+        await fs.writeFile(path.join(native.peerDirectory, "prompt-reply-release"), "release");
+        const result = await run;
+        expect(result.terminal.kind).toBe(completion === "complete" ? "ok" : "failed");
+        expect(updates.map((event) => event.data.delta)).toEqual(
+          completion === "complete" ? ["First chunk", " second chunk"] : ["First chunk"],
+        );
+      } finally {
+        await fs.writeFile(path.join(native.peerDirectory, "prompt-reply-release"), "release");
+        await Promise.allSettled([run]);
+        unsubscribe();
         attempt.close();
         await native.service.stop?.(native.context);
       }

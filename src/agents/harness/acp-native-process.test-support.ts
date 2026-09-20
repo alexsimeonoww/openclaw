@@ -64,6 +64,7 @@ export async function registerNative(
   peerOptions: {
     holdModeControl?: boolean;
     holdNewSession?: boolean;
+    holdPromptReply?: boolean;
     allowAlwaysOnly?: boolean;
   } = {},
 ) {
@@ -106,6 +107,7 @@ export async function registerNative(
               ...(peerName === "owner-agent.mjs" ? ["--model-controls"] : []),
               ...(peerOptions.holdModeControl ? ["--hold-mode-control"] : []),
               ...(peerOptions.holdNewSession ? ["--hold-new-session"] : []),
+              ...(peerOptions.holdPromptReply ? ["--hold-prompt-reply"] : []),
               ...(peerOptions.allowAlwaysOnly ? ["--allow-always-only"] : []),
             ],
           },
