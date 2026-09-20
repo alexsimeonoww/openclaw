@@ -1,4 +1,5 @@
 import type { PluginRegistry } from "../plugins/registry-types.js";
+import { retirePreparedModelRuntimeGeneration } from "./prepared-model-runtime.lifecycle.js";
 import {
   releasePreparedPluginPublication,
   retainPreparedPluginGeneration,
@@ -20,6 +21,7 @@ export function retirePreparedModelRuntimeOwnerIfUnused(
     if (owners.get(key) === owner) {
       owners.delete(key);
     }
+    retirePreparedModelRuntimeGeneration(owner);
     releasePreparedPluginPublication(owner);
   }
 }

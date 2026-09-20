@@ -20,12 +20,13 @@ import {
   capturePreparedModelRuntimeLifetime,
   closePreparedModelRuntimeSnapshots,
   registerPreparedModelRuntimeClose,
+  createPreparedModelRuntimeReplacement,
+  retirePreparedModelRuntimeGeneration,
 } from "./prepared-model-runtime.lifecycle.js";
 import {
   PreparedModelRuntimeOwnerNotPublishedError,
   PreparedModelRuntimePublicationSupersededError,
   advancePreparedModelRuntimeOwnerConfig,
-  createPreparedModelRuntimeReplacement,
   hasSameLifecycleInput,
   normalizeOptionalDir,
   normalizePreparedModelRuntimeInput,
@@ -138,6 +139,7 @@ async function closeModelRuntime(error: Error): Promise<void> {
   void closeEphemeralPreparedModelRuntimeResources().catch(() => {});
   const closingOwners = [...owners.values()];
   owners.clear();
+  closingOwners.forEach(retirePreparedModelRuntimeGeneration);
   retainedDirectRunOwners.clear(owners);
   retainedGatewayRunOwners.clear(owners);
   gatewayLifecycleActive = false;
@@ -389,7 +391,6 @@ const preparedModelRuntimeLeaseContext = {
   getBuildTimeoutMs: () => modelRuntimeBuildTimeoutMs,
   getGatewayLifecycleActive: () => gatewayLifecycleActive,
   getPendingReplacement: getBlockingReplacement,
-  prepareSnapshot: prepareModelRuntimeSnapshot,
 };
 
 /** Acquires a run generation from configured facts; full catalog discovery is explicit. */
