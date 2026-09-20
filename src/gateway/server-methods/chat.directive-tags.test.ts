@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { asOptionalRecord, expectDefined } from "@openclaw/normalization-core";
-import { CURRENT_SESSION_VERSION } from "openclaw/plugin-sdk/agent-sessions";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   GATEWAY_CLIENT_CAPS,
@@ -68,7 +67,10 @@ import { agentWaitHandler } from "./agent-wait.js";
 import { createScopedCliClient } from "./chat-client.test-support.js";
 import { handleChatSend, handleTrustedInternalChatSend } from "./chat-send-handler.js";
 import { readChatSendDedupeResponse } from "./chat-send-pre-admission.js";
-import { createChatDirectiveSuiteResources } from "./chat.directive-tags.test-support.js";
+import {
+  createChatDirectiveSuiteResources,
+  seedChatDirectiveFileTranscript,
+} from "./chat.directive-tags.test-support.js";
 import { initializeSessionReadContext } from "./sessions-read-cache.test-support.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
@@ -270,6 +272,7 @@ vi.mock("../session-utils.js", async () => {
       : {
           sessionId: mockState.sessionIdsByKey.get(rawKey) ?? mockState.sessionId,
           sessionFile: mockState.transcriptPath,
+          agentRuntimeOverride: "openclaw",
           ...mockState.sessionEntry,
         };
     const cfg = {
@@ -652,26 +655,10 @@ async function createTranscriptFixture(
   },
 ) {
   const { dir, transcriptPath } = createFixturePaths(prefix);
-  fs.writeFileSync(
-    transcriptPath,
-    `${JSON.stringify({
-      type: "session",
-      version: CURRENT_SESSION_VERSION,
-      id: mockState.sessionId,
-      timestamp: new Date(0).toISOString(),
-      cwd: "/tmp",
-    })}\n`,
-    "utf-8",
-  );
-  // The accessor resolves transcript targets from the persisted store, so the
-  // fixture seeds a real entry instead of relying on the mocked gateway wrapper.
-  await replaceSessionEntry(
+  await seedChatDirectiveFileTranscript(
     { ...owner, storePath: mockState.storePath },
-    {
-      sessionId: mockState.sessionId,
-      sessionFile: transcriptPath,
-      updatedAt: Date.now(),
-    },
+    mockState.sessionId,
+    transcriptPath,
   );
   return dir;
 }
@@ -680,6 +667,7 @@ async function createSqliteTranscriptFixture(prefix: string) {
   const { dir } = createFixturePaths(prefix);
   await replaceSessionEntry(sessionEntryScope(), {
     sessionId: mockState.sessionId,
+    agentRuntimeOverride: "openclaw",
     updatedAt: 1,
   });
   return dir;

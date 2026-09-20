@@ -81,6 +81,7 @@ it.each(admissionScenarios)(
       if (membershipRequired) {
         await upsertSessionEntryCore(scope, {
           sessionId: initialSessionId,
+          agentRuntimeOverride: "openclaw",
           updatedAt: Date.now(),
           visibility: "suggest",
           createdActor,
@@ -214,6 +215,7 @@ it.each(admissionScenarios)(
         // This focused test controls preparation; the native WS test proves its real producer.
         await upsertSessionEntryCore(scope, {
           sessionId: membershipRequired ? initialSessionId : "committed-session",
+          agentRuntimeOverride: "openclaw",
           updatedAt: Date.now(),
           createdActor,
           ...(membershipRequired ? { visibility: "suggest" as const } : {}),

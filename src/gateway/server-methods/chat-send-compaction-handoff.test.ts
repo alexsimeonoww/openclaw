@@ -57,6 +57,7 @@ it.each([
       const profile = ensureProfileForEmail("compaction-handoff@example.test");
       const entry = {
         sessionId: initialSessionId,
+        agentRuntimeOverride: "openclaw",
         updatedAt: Date.now(),
         createdActor: { type: "human", source: "profile", id: profile.id } as const,
       };

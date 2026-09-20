@@ -546,6 +546,10 @@ export function createFullModelCatalogAccess(
           );
           throw firstNativeFailure.error;
         }
+        // An unchanged native inventory cannot remove the current API catalog's captured rows.
+        const nativeInventoryChanged =
+          nativeDiscoveryCompleted &&
+          retainPreparedModelCatalogPublication(rawCatalog, rawInventory) !== rawInventory;
         const auth = getPreparedModelFullCatalogAuth(current) ?? currentAuth;
         const nativeAuth =
           nativeDiscoveryCompleted && discoveredProviders.length
@@ -590,7 +594,7 @@ export function createFullModelCatalogAccess(
           };
           setCatalogAuth(inventory.catalog, catalogAuth);
         }
-        const catalog = nativeDiscoveryCompleted ? project(rawCatalog) : current;
+        const catalog = nativeInventoryChanged ? project(rawCatalog) : current;
         fullCatalog =
           nativeCatalogAcquired &&
           eligibleProviders.every((provider) => inventory?.providers.has(provider))

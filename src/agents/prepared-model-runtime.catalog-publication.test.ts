@@ -180,16 +180,16 @@ beforeEach(() => {
 });
 
 describe("catalog publication session rows", () => {
-  it("reports unchanged static facts when an unselected native catalog finishes", async () => {
-    const loadModelCatalog = vi.fn(async () => []);
+  it("keeps API facts for empty native discovery and publishes selected native changes", async () => {
+    const loadModelCatalog = vi.fn<() => Promise<ModelCatalogEntry[]>>(async () => []);
     const registry = createEmptyPluginRegistry();
     registry.agentHarnesses.push({
-      pluginId: "unselected-native",
+      pluginId: "synthetic-native",
       source: "fixture",
       harness: {
-        id: "unselected-native",
-        label: "Unselected native runtime",
-        supports: () => ({ supported: false }),
+        id: "synthetic-native",
+        label: "Synthetic native runtime",
+        supports: () => ({ supported: true }),
         async runAttempt() {
           throw new Error("catalog-only fixture");
         },
@@ -199,9 +199,31 @@ describe("catalog publication session rows", () => {
     mocks.loadAgentRuntimePluginRegistryHandle.mockReturnValue(registry);
     mocks.authStorage.getAll.mockReturnValue({});
     mocks.modelRegistry.getAll.mockReturnValue([model]);
+    mocks.resolveAgentEffectiveModelPrimary.mockReturnValue("custom/synthetic-model");
     const owner = await publishPreparedModelRuntimeSnapshot(
       {
-        config: { agents: { defaults: { model: "custom/synthetic-model" } } },
+        config: {
+          agents: { defaults: { model: "custom/synthetic-model" } },
+          models: {
+            providers: {
+              custom: {
+                api: "openai-completions",
+                baseUrl: "https://synthetic.example.test/v1",
+                models: [
+                  {
+                    id: model.id,
+                    name: model.name,
+                    contextWindow: 32_000,
+                    reasoning: false,
+                    input: ["text"],
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    maxTokens: 1_000,
+                  },
+                ],
+              },
+            },
+          },
+        },
         agentDir: fixture.state.agentDir("default"),
       },
       { catalogMode: "static" },
@@ -214,12 +236,34 @@ describe("catalog publication session rows", () => {
     });
     try {
       expect(owner.readFullModelCatalog?.()).toBeUndefined();
+      expect(owner.modelCatalog.entries).toMatchObject([model]);
       const completed = await owner.loadFullModelCatalog!({ changedOnly: true });
       expect(completed.entries).toEqual(owner.modelCatalog.entries);
       expect(owner.readFullModelCatalog?.()).toBe(completed);
-      expect(loadModelCatalog).not.toHaveBeenCalled();
       expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
-      expect(changes).toEqual([false]);
+      expect(changes).not.toContain(true);
+
+      const nativeModel: ModelCatalogEntry = {
+        ...model,
+        contextWindow: 64_000,
+        nativeRuntime: "synthetic-native",
+      };
+      loadModelCatalog.mockResolvedValueOnce([nativeModel]);
+      const selected = await owner.loadNativeModelCatalog!({
+        provider: model.provider,
+        modelId: model.id,
+        runtime: "synthetic-native",
+      });
+      expect(selected.entries).toMatchObject([nativeModel]);
+      expect(selected.routeVariants.find((entry) => !entry.nativeRuntime)).toMatchObject({
+        provider: model.provider,
+        id: model.id,
+        api: "openai-completions",
+        contextWindow: 32_000,
+      });
+      expect(selected.routeVariants).toContainEqual(expect.objectContaining(nativeModel));
+      expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
+      expect(changes).toContain(true);
     } finally {
       unsubscribe();
     }

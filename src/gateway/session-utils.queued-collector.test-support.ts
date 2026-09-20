@@ -234,6 +234,11 @@ export function useQueuedCollectorFixture() {
         collect: true,
       }),
     ).toMatchObject({ status: "ok" });
+    const { storePath } = loadGatewaySessionEntryReadOnly(childSessionKey);
+    await upsertSessionEntryCore(
+      { storePath, sessionKey: childSessionKey },
+      { agentRuntimeOverride: "openclaw" },
+    );
     const registration = {
       runId,
       childSessionKey,

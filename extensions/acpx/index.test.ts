@@ -6,7 +6,6 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { waitForFixtureFile } from "../../test/helpers/process-wait.js";
 import setupPlugin from "./setup-api.js";
 
 const { createAcpxRuntimeServiceMock, tryDispatchAcpReplyHookMock, nativePrograms } = vi.hoisted(
@@ -334,7 +333,11 @@ describe("acpx plugin", () => {
           (error: unknown) => ({ models: undefined, error }),
         );
       try {
-        await waitForFixtureFile(path.join(peerDirectory, "session-new-entered"), catalog);
+        await expect
+          .poll(() => fs.readFile(path.join(peerDirectory, "session-new-entered"), "utf8"), {
+            timeout: 10_000,
+          })
+          .not.toBe("");
         if (lifecycle === "disabled") {
           config = {
             plugins: { entries: { acpx: { config: { nativeAgents: { opencode: false } } } } },

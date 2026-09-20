@@ -88,7 +88,6 @@ export type {
   PreparedModelRuntimeStores,
 } from "./prepared-model-runtime.owner.js";
 export type { PreparedModelCatalogRefreshOptions } from "./prepared-model-runtime.types.js";
-export type { AgentRuntimeCleanupRegistries } from "./prepared-model-runtime.retention.js";
 
 const log = createSubsystemLogger("agents/prepared-model-runtime");
 // Match channel startup grace. Startup releases its foreground wait at this

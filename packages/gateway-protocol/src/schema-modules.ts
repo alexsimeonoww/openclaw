@@ -34,6 +34,7 @@ export * from "./schema/hooks.js";
 export * from "./schema/human-mentions.js";
 export * from "./schema/logs-chat.js";
 export * from "./schema/migrations.js";
+export { ModelsListParamsSchema, type ModelsListParams } from "./schema/model-catalog.js";
 export * from "./schema/nodes.js";
 export * from "./schema/push.js";
 export * from "./schema/questions.js";
