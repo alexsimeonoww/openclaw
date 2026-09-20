@@ -179,7 +179,7 @@ describe("canonical shared-state worker admission", () => {
     },
   );
 
-  it.each(["Web Push", "GitHub publication"] as const)(
+  it.each(["Web Push", "task", "GitHub publication"] as const)(
     "keeps metadata inspection and the first %s operation in the same actor",
     async (operation) => {
       const captured = context();
@@ -206,7 +206,14 @@ describe("canonical shared-state worker admission", () => {
           const metadataWorker = messages.mock.contexts[0];
           expect(metadataWorker).toBeInstanceOf(Worker);
           messages.mockClear();
-          if (operation === "Web Push") {
+          if (operation === "task") {
+            expect(
+              await scope.execute({
+                type: "tasks.list",
+                input: { ownerKey: "agent:main:main" },
+              }),
+            ).toEqual([]);
+          } else if (operation === "Web Push") {
             expect(
               await scope.execute({
                 type: "webPush.listTerminalWebPushApprovalDeliveryIds",
