@@ -4,6 +4,7 @@ import type {
   WorkerMachineOption,
   WorkerOperatingSystem,
   WorkerProfile,
+  WorkerProvider,
 } from "../../plugins/types.js";
 import type { WorkerProviderLifecycleOptions } from "./provider-lifecycle.types.js";
 import {
@@ -20,6 +21,7 @@ export function createWorkerMachineCatalog(
   const { requireWorkerProfile } = options;
   type MachineCatalog = {
     providerId: string;
+    provider: WorkerProvider | undefined;
     settings: WorkerProfile;
     providerDisplayId?: string;
     machines?: readonly WorkerMachineOption[];
@@ -49,17 +51,18 @@ export function createWorkerMachineCatalog(
       return undefined;
     }
     const settings = requireWorkerProfile(profile.settings ?? {});
+    const provider = options.resolveProvider(profile.provider);
     let catalog = machineCatalogs.get(profileId);
     if (
       !catalog ||
       catalog.providerId !== profile.provider ||
+      catalog.provider !== provider ||
       !isDeepStrictEqual(catalog.settings, settings)
     ) {
-      catalog = { providerId: profile.provider, settings: structuredClone(settings) };
+      // Plugin reload replaces provider objects without changing profile settings.
+      catalog = { providerId: profile.provider, provider, settings: structuredClone(settings) };
       try {
-        const displayId = options
-          .resolveProvider(profile.provider)
-          ?.resolveDisplayId?.(structuredClone(settings));
+        const displayId = provider?.resolveDisplayId?.(structuredClone(settings));
         if (
           typeof displayId === "string" &&
           /^[a-z][a-z0-9-]{0,63}$/.test(displayId) &&

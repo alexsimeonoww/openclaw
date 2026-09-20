@@ -23,15 +23,24 @@ function fixture(resolveDisplayId?: WorkerProvider["resolveDisplayId"]) {
     inspect: vi.fn(),
     destroy: vi.fn(),
   };
+  let activeProvider: WorkerProvider | undefined = provider;
   const warn = vi.fn();
   const catalog = createWorkerMachineCatalog({
     getConfig: () => config,
-    resolveProvider: () => provider,
+    resolveProvider: () => activeProvider,
     warn,
     requireWorkerProfile: (value) =>
       requireWorkerProfile(value, (_code, message) => new Error(message)),
   });
-  return { config, catalog, provider, warn };
+  return {
+    config,
+    catalog,
+    provider,
+    warn,
+    setProvider: (next: WorkerProvider | undefined) => {
+      activeProvider = next;
+    },
+  };
 }
 
 describe("profile backend display identity", () => {
@@ -52,6 +61,28 @@ describe("profile backend display identity", () => {
     ]);
     expect(catalog.readProviderDisplayId("missing")).toBeUndefined();
     delete config.cloudWorkers!.profiles!.production;
+    expect(catalog.readProviderDisplayId("production")).toBeUndefined();
+  });
+
+  it("refreshes display metadata when the live provider binding changes", async () => {
+    const firstHook = vi.fn(() => "aws");
+    const { catalog, provider, setProvider } = fixture(firstHook);
+    setProvider(undefined);
+    expect(catalog.readProviderDisplayId("production")).toBeUndefined();
+
+    setProvider(provider);
+    expect(catalog.readProviderDisplayId("production")).toBe("aws");
+    expect(catalog.readProviderDisplayId("production")).toBe("aws");
+    expect(firstHook).toHaveBeenCalledOnce();
+
+    const reloadedHook = vi.fn(() => "gcp");
+    setProvider({ ...provider, resolveDisplayId: reloadedHook });
+    expect(catalog.readProviderDisplayId("production")).toBe("gcp");
+    await expect(catalog.listMachineOptions("production")).resolves.toHaveLength(1);
+    expect(catalog.readProviderDisplayId("production")).toBe("gcp");
+    expect(reloadedHook).toHaveBeenCalledOnce();
+
+    setProvider(undefined);
     expect(catalog.readProviderDisplayId("production")).toBeUndefined();
   });
 
