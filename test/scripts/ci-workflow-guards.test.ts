@@ -49,6 +49,10 @@ import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../helpers/t
 import { resolveWorkflowBash } from "../helpers/workflow-bash.js";
 import { sharedVitestConfig } from "../vitest/vitest.shared.config.ts";
 import {
+  startupCorpusTestFiles,
+  stateStartupCorpusTestFiles,
+} from "../vitest/vitest.startup-corpus-paths.mjs";
+import {
   createUiE2eVitestConfig,
   uiE2eRealGatewayTestFiles,
 } from "../vitest/vitest.ui-e2e.config.ts";
@@ -13041,7 +13045,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     55_000,
   );
 
-  it("runs the startup corpus once when a canonical PR admits both complete Node files", () => {
+  it("runs the startup corpus once when a canonical PR admits every complete Node file", () => {
     const revision = "a".repeat(40);
     const shards = createNodeTestShardBundles({
       compactMode: "pull-request",
@@ -13117,10 +13121,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
                 requiresDist: false,
                 runner: "ubuntu-24.04",
                 configs: ["test/vitest/vitest.runtime-config.config.ts"],
-                includePatterns: [
-                  "src/config/config-startup-corpus.test.ts",
-                  "src/config/state-startup-corpus.test.ts",
-                ],
+                includePatterns: startupCorpusTestFiles,
               },
             ],
           },
@@ -13154,10 +13155,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
   );
 
   it("runs the startup corpus once on full canonical main pushes", () => {
-    const files = [
-      "src/config/config-startup-corpus.test.ts",
-      "src/config/state-startup-corpus.test.ts",
-    ];
+    const files = startupCorpusTestFiles;
     const groups = createNodeTestShardBundles({
       compactMode: "push",
       includeReleaseOnlyPluginShards: false,
@@ -13193,13 +13191,14 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
   });
 
   it.each([
-    { eventName: "pull_request", runCheck: true, frozenTarget: false },
+    { eventName: "pull_request", runCheck: true, frozenTarget: false, splitCorpus: true },
     { eventName: "pull_request", runCheck: false },
     { eventName: "push", runCheck: false },
     { eventName: "push", ref: "refs/heads/release" },
     { eventName: "push", repository: "fixture/openclaw" },
     { eventName: "workflow_dispatch", releaseGate: false },
-    { eventName: "workflow_dispatch", releaseGate: true, frozenTarget: true },
+    { eventName: "workflow_dispatch", releaseGate: true, frozenTarget: true, splitCorpus: true },
+    { eventName: "workflow_dispatch", releaseGate: true, frozenTarget: true, splitCorpus: false },
   ] as const)("retains the startup corpus outside full canonical main: %j", (scenario) => {
     const steps: WorkflowStep[] = readCiWorkflow().jobs["checks-fast-core"].steps;
     const selected = steps.filter(
@@ -13220,6 +13219,14 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
       const bin = path.join(directory, "bin");
       const argsPath = path.join(directory, "args");
       mkdirSync(bin);
+      if (scenario.splitCorpus) {
+        mkdirSync(path.join(directory, "test/vitest"), { recursive: true });
+        writeFileSync(path.join(directory, "test/vitest/vitest.startup-corpus-paths.mjs"), "");
+        mkdirSync(path.join(directory, "src/config"), { recursive: true });
+        for (const file of startupCorpusTestFiles) {
+          writeFileSync(path.join(directory, file), "");
+        }
+      }
       writeExecutable(path.join(bin, "pnpm"), [
         "#!/bin/sh",
         '[ "$*" = "build qaRuntime" ] || exit 1',
@@ -13273,15 +13280,27 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
               "./scripts/lib/vitest-resource-reporter.mts",
             ]),
       ];
-      expect(readArgs("config")).toEqual([
-        ...commonArgs,
-        "src/config/config-startup-corpus.test.ts",
-      ]);
-      for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
-        expect(readArgs(shard), shard).toEqual([
+      if (scenario.splitCorpus) {
+        expect(readArgs("config")).toEqual([
           ...commonArgs,
-          "src/config/state-startup-corpus.test.ts",
+          "--maxWorkers=4",
+          "src/config/config-startup-corpus.test.ts",
+          ...stateStartupCorpusTestFiles.toSorted(),
         ]);
+        expect(readdirSync(directory).filter((file) => file.startsWith("args."))).toEqual([
+          "args.config",
+        ]);
+      } else {
+        expect(readArgs("config")).toEqual([
+          ...commonArgs,
+          "src/config/config-startup-corpus.test.ts",
+        ]);
+        for (const shard of ["1/4", "2/4", "3/4", "4/4"]) {
+          expect(readArgs(shard), shard).toEqual([
+            ...commonArgs,
+            "src/config/state-startup-corpus.test.ts",
+          ]);
+        }
       }
     }
   });
