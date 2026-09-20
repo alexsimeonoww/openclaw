@@ -4,7 +4,6 @@ import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-ar
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { chatSessionListResponse } from "./chat-flow.test-support.ts";
 import {
-  installSwarmDiagnostic,
   logSwarmDiagnostic,
   type SwarmDiagnosticPane,
   type SwarmDiagnosticWindow,
@@ -74,7 +73,6 @@ suite.define(() => {
         const widget = page.locator('[data-test-id="chat-swarm"]');
         const disclosure = widget.locator("details");
         const summary = disclosure.locator("summary");
-        await installSwarmDiagnostic(page, sessionKey);
         await expect.poll(() => widget.locator(".chat-swarm__task").count()).toBe(viewport.count);
         expect(await widget.locator(".chat-swarm__markers").isVisible()).toBe(true);
         await page.screenshot({ path: path.join(proofDir, "active.png"), animations: "disabled" });
@@ -134,12 +132,11 @@ suite.define(() => {
           )
           .toBe(true);
         const outcomeClearance = await summary.evaluate((element) => {
-          const diagnostic = (window as SwarmDiagnosticWindow).openclawSwarmDiagnostic;
-          if (diagnostic) {
-            diagnostic.expandedDetails = element.parentElement;
-            const pane = element.closest<SwarmDiagnosticPane>("openclaw-chat-pane");
-            diagnostic.expandedEpoch = pane?.state?.connectionEpoch;
-          }
+          const pane = element.closest<SwarmDiagnosticPane>("openclaw-chat-pane");
+          (window as SwarmDiagnosticWindow).openclawSwarmDiagnostic = {
+            expandedDetails: element.parentElement,
+            expandedEpoch: pane?.state?.connectionEpoch,
+          };
           const outcome = element.parentElement?.querySelector(".chat-swarm__outcome");
           if (!outcome) {
             throw new Error("Expanded Swarm outcome is missing");

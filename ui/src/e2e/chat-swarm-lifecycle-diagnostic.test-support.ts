@@ -10,58 +10,10 @@ export type SwarmDiagnosticPane = HTMLElement & {
 };
 export type SwarmDiagnosticWindow = Window & {
   openclawSwarmDiagnostic?: {
-    events: Record<string, unknown>[];
     expandedDetails?: Element | null;
     expandedEpoch?: number;
   };
 };
-
-export async function installSwarmDiagnostic(page: Page, parentKey: string) {
-  await page.evaluate((key) => {
-    const events: Record<string, unknown>[] = [];
-    (window as SwarmDiagnosticWindow).openclawSwarmDiagnostic = { events };
-    const record = (entry: Record<string, unknown>) => {
-      if (events.length === 40) {
-        events.shift();
-      }
-      events.push({ at: Math.round(performance.now()), ...entry });
-    };
-    // This callback runs in the browser realm, inspecting only mock protocol fields.
-    const object = (value: unknown): Record<string, unknown> | null =>
-      typeof value === "object" && value !== null && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : null;
-    // oxlint-disable-next-line typescript/unbound-method -- Delegation below preserves the socket receiver with call().
-    const dispatch = WebSocket.prototype.dispatchEvent;
-    WebSocket.prototype.dispatchEvent = function (event) {
-      if (event instanceof MessageEvent && typeof event.data === "string") {
-        const decoded: unknown = JSON.parse(event.data);
-        const frame = object(decoded);
-        const payload = object(frame?.payload);
-        const rows: unknown[] | null = Array.isArray(payload?.sessions) ? payload.sessions : null;
-        const described = object(payload?.session);
-        const parent =
-          described?.key === key ? described : rows?.map(object).find((row) => row?.key === key);
-        if (frame?.type === "event") {
-          record({ kind: "event", event: frame.event, seq: frame.seq });
-        } else if (frame?.type === "res" && (parent || rows)) {
-          record({
-            kind: "response",
-            id: frame.id,
-            method: rows ? "sessions.list" : "sessions.describe",
-            count: rows?.length,
-            status: parent?.status,
-            hasActiveRun: parent?.hasActiveRun,
-            updatedAt: parent?.updatedAt,
-          });
-        }
-      } else if (["open", "close", "error"].includes(event.type)) {
-        record({ kind: "socket", event: event.type });
-      }
-      return dispatch.call(this, event);
-    };
-  }, parentKey);
-}
 
 export async function logSwarmDiagnostic(
   page: Page,
@@ -75,7 +27,8 @@ export async function logSwarmDiagnostic(
     const app = document.querySelector("openclaw-app") as
       | (HTMLElement & { runtime?: { context?: ApplicationContext } })
       | null;
-    const snapshot = app?.runtime?.context?.gateway.snapshot;
+    const applicationGateway = app?.runtime?.context?.gateway;
+    const snapshot = applicationGateway?.snapshot;
     const parent = pane?.swarmHydrator?.rows.find((row) => row.key === key);
     const widget = document.querySelector('[data-test-id="chat-swarm"]');
     const details = widget?.querySelector("details");
@@ -94,7 +47,7 @@ export async function logSwarmDiagnostic(
       detailsOpen: details?.open,
       detailsSame: details === diagnostic?.expandedDetails,
       outcome: widget?.querySelector(".chat-swarm__outcome")?.textContent?.trim(),
-      events: diagnostic?.events,
+      events: applicationGateway?.eventLog.slice(0, 40).map(({ ts, event }) => ({ ts, event })),
     };
   }, parentKey);
   const requests = (await gateway.getRequests())
