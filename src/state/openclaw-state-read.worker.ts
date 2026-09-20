@@ -4,6 +4,7 @@ import { readWorkspaceStateSnapshotForDirectoryInDatabase } from "../agents/work
 import { ExecutionDecisionCursorError } from "../audit/execution-decision-receipts.js";
 import { inspectExecutionIdentityRunInDatabase } from "../audit/execution-identity-context.js";
 import { getFleetCellInDatabase, listFleetCellsInDatabase } from "../fleet/registry.kernel.js";
+import { readWorkerSessionPlacementProjectionInDatabase } from "../gateway/worker-environments/placement-read-projection.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { runWithSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import { withStateDatabaseCoordinatorRuntimeDirectory } from "../infra/state-database-coordinator.js";
@@ -45,6 +46,10 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
     typeof coordinatorRuntime.keepAlive === "boolean" &&
     (input.command.type === "admit" ||
       input.command.type === "agentDatabaseRegistry.read" ||
+      (input.command.type === "workers.placementProjection" &&
+        Array.isArray(input.command.sessionIds) &&
+        input.command.sessionIds.every((id) => typeof id === "string") &&
+        Array.isArray(input.command.conflictBindings)) ||
       (input.command.type === "userProfiles.avatar.reconcile" &&
         typeof input.command.profileId === "string") ||
       (input.command.type === "audit.run.inspect" &&
@@ -113,6 +118,18 @@ serveWorkerTasks((input): OpenClawStateReadReply => {
           return withOpenClawStateReadOnlyLocation(
             ({ db }) => {
               sourceAdmitted = true;
+              if (command.type === "workers.placementProjection") {
+                return {
+                  ok: true,
+                  type: command.type,
+                  sourceAdmitted,
+                  result: readWorkerSessionPlacementProjectionInDatabase(
+                    db,
+                    command.sessionIds,
+                    command.conflictBindings,
+                  ),
+                };
+              }
               if (command.type === "onboardingRecommendations.read") {
                 return {
                   ok: true,

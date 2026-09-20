@@ -127,7 +127,7 @@ it.each([
   { executionMode: "remote-exec", visibleBeforeStaging: false },
 ] as const)(
   "projects $executionMode workspace reconciliation at its owned boundary",
-  (scenario) => {
+  async (scenario) => {
     const active = advanceToActive(scenario.executionMode);
     const claim = store.claimTurn({
       ...SESSION,
@@ -139,26 +139,31 @@ it.each([
 
     const readReconciling = () => store.getWorkspaceResultReconcilingSessionIds([active.sessionId]);
     expect(readReconciling().has(active.sessionId)).toBe(scenario.visibleBeforeStaging);
-    expect(store.getProjectionFacts(active.sessionId).workspaceResultReconciling).toBe(
-      scenario.visibleBeforeStaging,
-    );
+    expect(
+      (await store.readProjection([active.sessionId])).workspaceResultReconcilingSessionIds.has(
+        active.sessionId,
+      ),
+    ).toBe(scenario.visibleBeforeStaging);
     const stagedResultRef = `refs/openclaw/worker-results/${claim.claimId}`;
     store.recordStagedWorkspaceResult(claim, stagedResultRef);
     expect(readReconciling()).toEqual(new Set([active.sessionId]));
     store.recordWorkspaceResultConflict(claim, { paths: ["conflict.txt"], stagedResultRef });
-    expect(store.getProjectionFacts(active.sessionId)).toMatchObject({
-      placement: {
-        workspaceResultConflict: { paths: ["conflict.txt"], stagedResultRef, totalCount: 1 },
-      },
-      workspaceResultReconciling: true,
+    const conflicted = await store.readProjection([active.sessionId]);
+    expect(conflicted.placements.get(active.sessionId)).toMatchObject({
+      workspaceResultConflict: { paths: ["conflict.txt"], stagedResultRef, totalCount: 1 },
     });
+    expect(conflicted.workspaceResultReconcilingSessionIds.has(active.sessionId)).toBe(true);
     store.recordWorkspaceResultConflict(claim, undefined);
-    expect(store.getProjectionFacts(active.sessionId).placement).not.toHaveProperty(
-      "workspaceResultConflict",
-    );
+    expect(
+      (await store.readProjection([active.sessionId])).placements.get(active.sessionId),
+    ).not.toHaveProperty("workspaceResultConflict");
     store.acceptWorkspaceResult(claim);
     store.completeWorkspaceResultAndReleaseTurn(claim);
-    expect(store.getProjectionFacts(active.sessionId).workspaceResultReconciling).toBe(false);
+    expect(
+      (await store.readProjection([active.sessionId])).workspaceResultReconcilingSessionIds.has(
+        active.sessionId,
+      ),
+    ).toBe(false);
   },
 );
 

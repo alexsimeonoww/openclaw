@@ -68,6 +68,9 @@ function readPool(): ReadPool {
 }
 
 function captureCommand(command: OpenClawStateReadCommand): OpenClawStateReadCommand {
+  if (command.type === "workers.placementProjection") {
+    return structuredClone(command);
+  }
   if (command.type === "audit.run.inspect") {
     const input = command.input;
     const common = {
@@ -93,6 +96,9 @@ function captureCommand(command: OpenClawStateReadCommand): OpenClawStateReadCom
 
 function commandBytes(command: OpenClawStateReadRequest["command"]): number {
   let bytes = Buffer.byteLength(command.type, "utf8");
+  if (command.type === "workers.placementProjection") {
+    return Buffer.byteLength(JSON.stringify(command), "utf8");
+  }
   if (command.type === "fleet.get") {
     return bytes + Buffer.byteLength(command.tenantId, "utf8");
   }
