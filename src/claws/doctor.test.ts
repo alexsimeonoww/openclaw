@@ -6,7 +6,10 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { McpServerConfig } from "../config/types.mcp.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseByPathAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { applyClawAddPlan } from "./add.js";
 import { installClawCronJobs } from "./cron.js";
@@ -219,8 +222,8 @@ describe("collectClawStateHealthFindings", () => {
 
   it("does not change existing database bytes, metadata, schema, or journal mode", async () => {
     const current = await installFixture({ withMcp: true, withCron: true });
-    closeOpenClawStateDatabaseForTest();
     const databasePath = resolveOpenClawStateSqlitePath(current.env);
+    await closeOpenClawStateDatabaseByPathAsync(databasePath);
     const beforeBytes = await readFile(databasePath);
     const beforeStat = await stat(databasePath);
     const beforeDb = new DatabaseSync(databasePath, { readOnly: true });
