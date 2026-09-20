@@ -29,6 +29,7 @@
       "pluginApi": ">=2026.9.5"
     },
     "build": {
+      "bundledDist": false,
       "openclawVersion": "2026.9.5",
       "workerEntries": ["./src/inference.worker.ts"],
       "staticAssets": [
