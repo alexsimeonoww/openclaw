@@ -7,6 +7,7 @@ import type {
 import type { FleetCellRecord } from "../fleet/registry.types.js";
 import type { SqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import type { AsyncWorkScope } from "../shared/async-work-scope.js";
+import type { SkillLibraryReadOnlyOperations } from "../skills/library/selection-read.kernel.js";
 import type { OnboardingRecommendationsRecord } from "./onboarding-recommendations.contract.js";
 import type { OpenClawAgentDatabaseRegistryReadResult } from "./openclaw-agent-db-contract.js";
 import type { ConfigMachineState } from "./openclaw-state-db.generated.js";
@@ -28,6 +29,12 @@ export type OpenClawStateReadAuthority = {
 };
 
 export type OpenClawStateReadCommand =
+  | {
+      [Kind in keyof SkillLibraryReadOnlyOperations]: {
+        type: Kind;
+        input: SkillLibraryReadOnlyOperations[Kind]["input"];
+      };
+    }[keyof SkillLibraryReadOnlyOperations]
   | { type: "agentDatabaseRegistry.read" }
   | { type: "onboardingRecommendations.read"; configKey: string }
   | { type: "userProfiles.avatar.reconcile"; profileId: string }
@@ -45,6 +52,14 @@ export type OpenClawStateReadRequest = {
   command: OpenClawStateReadCommand | { type: "admit" };
 };
 export type OpenClawStateReadReply = (
+  | {
+      [Kind in keyof SkillLibraryReadOnlyOperations]: {
+        ok: true;
+        type: Kind;
+        sourceAdmitted: true;
+        value: SkillLibraryReadOnlyOperations[Kind]["output"];
+      };
+    }[keyof SkillLibraryReadOnlyOperations]
   | {
       ok: true;
       type: "agentDatabaseRegistry.read";
