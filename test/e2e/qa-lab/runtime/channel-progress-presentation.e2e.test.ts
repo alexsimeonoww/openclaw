@@ -741,45 +741,40 @@ describe("channel progress presentation through an isolated Gateway", () => {
     const completions: string[] = [];
     const tasks: Array<Record<string, unknown>> = [];
     const inboundMessages: Array<Record<string, unknown>> = [];
-    const providerRequests: Array<{ model: unknown; requester: boolean; completion: boolean }> = [];
+    const providerRequests: Array<{
+      model: unknown;
+      requester: boolean;
+      completion: boolean;
+      requestText: string;
+    }> = [];
     let observerRequests = 0;
     let releaseRequester: (() => void) | undefined;
     let requesterHeld = false;
     const slowRequesterCases = new Set<string>();
     const caseNames = ["visible", "restart"] as const;
     const settledRequesterCases: string[] = [];
-    const observerFailures = () => {
-      let attempts = 0;
-      return gateway
+    const observerFailures = () =>
+      gateway
         .logs()
         .split("\n")
         .flatMap((line) => {
           try {
             const value = asRecord(JSON.parse(line));
             const message = readStringValue(value.message) ?? "";
-            if (
-              value.subsystem === "provider-transport-fetch" &&
-              message.startsWith("[model-fetch] start ") &&
-              message.includes("model=observer-failure-fixture ")
-            ) {
-              attempts += 1;
-            }
-            if (message === "session observer disabled after consecutive failures") {
-              const failure = {
-                message,
-                error: value.error,
-                runId: value.runId,
-                attempts,
-              };
-              attempts = 0;
-              return [failure];
-            }
-            return [];
+            return message === "session observer disabled after consecutive failures"
+              ? [
+                  {
+                    message,
+                    error: value.error,
+                    runId: value.runId,
+                    attempts: value.consecutiveFailures,
+                  },
+                ]
+              : [];
           } catch {
             return [];
           }
         });
-    };
     // The shared terminal fixture intentionally requests a direct fallback.
     // Supply a visible model final over HTTP to exercise automatic-final receipts.
     const proxy = createServer((request, response) => {
@@ -796,6 +791,7 @@ describe("channel progress presentation through an isolated Gateway", () => {
           model: body.model,
           requester: currentText.includes("Subagent terminal reply QA check:"),
           completion,
+          requestText: currentText.slice(0, 1_000),
         });
         if (String(parseBody(raw).model).endsWith("observer-failure-fixture")) {
           observerRequests += 1;
@@ -1095,8 +1091,8 @@ describe("channel progress presentation through an isolated Gateway", () => {
         String(failure.error).includes("Isolated completion failed with stop reason error"),
       ),
     ).toBe(true);
-    // A failed connection can precede the proxy's HTTP receipt. Count starts at
-    // the transport owner so those failures cannot hide an unbounded retry.
+    // The observer warning carries its run-owned consecutive-failure count;
+    // provider transport starts from overlapping runs cannot be partitioned by warning order.
     expect(observerFailures().every((failure) => failure.attempts === 2)).toBe(true);
     expect(new Set(observerEvents.map((event) => event.runId)).size).toBeGreaterThanOrEqual(2);
     const evidenceDir = path.join(process.cwd(), ".artifacts", "channel-progress-presentation");
