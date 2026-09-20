@@ -622,8 +622,7 @@ suite.define(() => {
           // Cover the agreed direct shortcuts against the same isolated real Gateway.
           // The existing capture gate exports these sanitized views on manual proof runs.
           const currentPane = activePane();
-          const shell = page.locator(".shell");
-          await capture("direct-01-before.png", shell, [currentPane.locator(".chat-thread")]);
+          await capture("direct-01-before.png", currentPane, [currentPane.locator(".chat-thread")]);
           await page.keyboard.press("ControlOrMeta+/");
           const helper = page.locator("openclaw-keyboard-shortcuts-dialog");
           const newHint = helper.locator(".shortcut-row").filter({ hasText: "Open New Session" });
@@ -634,7 +633,11 @@ suite.define(() => {
           await archiveHint.waitFor({ state: "visible" });
           expect((await newHint.locator("kbd").allTextContents()).at(-1)).toBe("O");
           expect((await archiveHint.locator("kbd").allTextContents()).at(-1)).toBe("A");
-          await capture("direct-02-keyboard-helper.png", shell, [newHint, archiveHint]);
+          // The host is display: contents; the native dialog owns the opening animation.
+          await capture("direct-02-keyboard-helper.png", helper.locator("dialog"), [
+            newHint,
+            archiveHint,
+          ]);
           await page.keyboard.press("Escape");
           await newHint.waitFor({ state: "hidden" });
           await page.keyboard.press("ControlOrMeta+Shift+O");
@@ -644,7 +647,9 @@ suite.define(() => {
             .poll(() => draft.evaluate((element) => element === document.activeElement))
             .toBe(true);
           expect(await draft.inputValue()).toBe("");
-          await capture("direct-03-new-session.png", shell, [draft]);
+          await capture("direct-03-new-session.png", page.locator("openclaw-new-session-page"), [
+            draft,
+          ]);
           await page.goBack();
           await expect
             .poll(() =>
@@ -655,7 +660,7 @@ suite.define(() => {
             .toBe(otherKey);
           const composer = currentPane.locator(".agent-chat__composer-combobox > textarea");
           await composer.fill("Keep this unsent shortcut draft");
-          await capture("direct-04-archive-before.png", shell, [composer]);
+          await capture("direct-04-archive-before.png", currentPane, [composer]);
           await page.keyboard.press("ControlOrMeta+Shift+A");
           const archiveRequests = (archived: boolean) =>
             rpc.filter(
@@ -669,7 +674,7 @@ suite.define(() => {
             .toBe(1);
           const undo = page.getByRole("button", { name: "Undo", exact: true });
           await undo.waitFor({ state: "visible" });
-          await capture("direct-05-archive-after.png", shell, [
+          await capture("direct-05-archive-after.png", currentPane, [
             currentPane.locator(".chat-thread"),
           ]);
           await undo.click();
