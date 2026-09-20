@@ -204,6 +204,7 @@ describe("channelsStatusCommand SecretRef fallback flow", () => {
       method: "channels.status",
       params: { channel: "imsg", probe: true, timeoutMs: 30000 },
       timeoutMs: 30000,
+      sharedStateMode: "read-only",
     });
   });
 

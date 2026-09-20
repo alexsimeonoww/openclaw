@@ -80,6 +80,8 @@ state plus probe results such as `works`, `probe failed`, `audit ok`, or `audit 
 If the gateway is unreachable, `channels status` falls back to config-only summaries
 instead of live probe output.
 
+The command reads existing local device authentication without creating an identity or persisting tokens returned by the Gateway, including when `--probe` is enabled.
+
 `channels status` does not support `--deep`; use `openclaw channels status --probe` for channel checks. The separate top-level `openclaw status --deep` command provides a broader status probe.
 
 ## Inbound dead letters
