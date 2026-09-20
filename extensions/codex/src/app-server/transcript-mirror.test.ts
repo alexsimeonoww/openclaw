@@ -1,7 +1,6 @@
 // Codex tests cover transcript mirror plugin behavior.
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {
   embeddedAgentLog,
@@ -14,7 +13,6 @@ import {
 } from "openclaw/plugin-sdk/hook-runtime";
 import type { AssistantMessage } from "openclaw/plugin-sdk/llm";
 import { createMockPluginRegistry } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { readSessionTranscriptEvents } from "openclaw/plugin-sdk/session-transcript-runtime";
 import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
@@ -41,6 +39,7 @@ import {
   mirrorPromptAtTurnStartBestEffort,
   projectBoundedCodexThreadHistory,
 } from "./transcript-mirror.js";
+import { createCodexTranscriptMirrorFixture } from "./transcript-mirror.test-support.js";
 import { attachCodexMirrorIdentity } from "./upstream-prompt-provenance.js";
 
 const mirrorCodexAppServerTranscript = codexTranscriptMirrorRuntime.mirror;
@@ -74,21 +73,17 @@ function messageContent(message: AgentMessage | undefined) {
   return message.content;
 }
 
-const tempDirs: string[] = [];
+const {
+  makeRoot,
+  createTarget: createSqliteMirrorTarget,
+  cleanup: cleanupMirrorRoots,
+} = createCodexTranscriptMirrorFixture();
 
 afterEach(async () => {
   resetGlobalHookRunner();
   publishSessionTranscriptUpdateByIdentityMock.mockReset();
-  for (const dir of tempDirs.splice(0)) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
+  await cleanupMirrorRoots();
 });
-
-async function makeRoot(prefix: string): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(root);
-  return root;
-}
 
 describe("buildCodexUserPromptMessage", () => {
   it("uses transcriptPrompt when an embedded caller does not provide a recorder", () => {
@@ -156,31 +151,6 @@ function readEventMessages(events: unknown[]): Array<{ role?: string; text?: str
           : undefined;
       return { role: message.role, text: content };
     });
-}
-
-async function createSqliteMirrorTarget(prefix: string, options: { sessionId?: string } = {}) {
-  const root = await makeRoot(prefix);
-  const agentId = "main";
-  const sessionId = options.sessionId ?? "session-1";
-  const sessionKey = `agent:${agentId}:${sessionId}`;
-  const storePath = path.join(root, "openclaw-agent.sqlite");
-  await upsertSessionEntry({
-    agentId,
-    sessionKey,
-    storePath,
-    entry: {
-      sessionFile: `sqlite:${agentId}:${sessionId}:${storePath}`,
-      sessionId,
-      updatedAt: 1,
-    },
-  });
-  return {
-    agentId,
-    sessionId,
-    sessionKey,
-    storePath,
-    bogusSessionFile: path.join(root, "should-not-be-created.jsonl"),
-  };
 }
 
 async function readMirrorEvents(target: {
