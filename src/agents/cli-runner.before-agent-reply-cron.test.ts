@@ -221,7 +221,9 @@ describe("runCliAgent before_agent_reply seam", () => {
     const outcome = operation.catch((error: unknown) => error);
     try {
       await entered.promise;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(prepareCliRunContextMock).not.toHaveBeenCalled();
     } finally {
       abort.abort(failure);

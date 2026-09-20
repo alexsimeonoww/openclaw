@@ -521,7 +521,9 @@ describe("runEmbeddedAgentViaCliBackendIfEligible execution", () => {
     );
     try {
       await entered.promise;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(runCliAgent).not.toHaveBeenCalled();
       expect(transcriptRecorder.finalize).not.toHaveBeenCalled();
     } finally {
