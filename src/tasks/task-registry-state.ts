@@ -692,19 +692,26 @@ export async function runTaskRegistryWorkerMutation<T>(
   pendingMutations.add(pending);
   dirtyScopes.add(scope);
   bumpTaskRegistryRevision();
+  const assertRuntimeOwner = () => {
+    admission.assertCurrent();
+    if (!isCurrentTaskRegistryDatabase(admission) || getTaskRegistryStore() !== store) {
+      projection.dirty = true;
+      throw new Error("Task registry publication owner is no longer current.");
+    }
+    context.assertPublicationOwnerCurrent?.();
+  };
+  let mutationSucceeded = false;
   try {
-    return await mutate(() => recovery?.begin());
+    const result = await mutate(() => recovery?.begin());
+    mutationSucceeded = true;
+    return result;
   } finally {
     dirtyScopes.add(scope);
     bumpTaskRegistryRevision();
     try {
       claimTaskRegistryPublication(pending, context.publicationRecords());
       const assertOwner = () => {
-        admission.assertCurrent();
-        if (!isCurrentTaskRegistryDatabase(admission) || getTaskRegistryStore() !== store) {
-          projection.dirty = true;
-          throw new Error("Task registry publication owner is no longer current.");
-        }
+        assertRuntimeOwner();
         recovery?.assertCurrent();
       };
       const { conflicted } = await reconcileTaskRegistryWorkerSnapshot({
@@ -729,12 +736,23 @@ export async function runTaskRegistryWorkerMutation<T>(
         dirtyScopes.delete(scope);
       }
     } catch (error) {
-      // A newer committed writer owns publication; its predecessor still settled successfully.
-      if (!recovery?.wasSuperseded(error)) {
-        context.onPublicationError?.(error);
+      let publicationError = error;
+      let superseded = false;
+      if (mutationSucceeded && recovery?.wasSuperseded(error)) {
+        try {
+          assertRuntimeOwner();
+          superseded = true;
+        } catch (ownerError) {
+          publicationError = ownerError;
+        }
+      }
+      // A newer write retires this publication, not its successfully committed mutation.
+      // Keep the dirty scope so the next reader prepares the authoritative row.
+      if (!superseded) {
+        context.onPublicationError?.(publicationError);
         taskRegistryLog.warn("Failed to reconcile managed child task after worker operation", {
           flowId: scope.flowId,
-          error,
+          error: publicationError,
         });
       }
     } finally {

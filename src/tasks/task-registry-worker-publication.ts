@@ -29,6 +29,7 @@ export type TaskRegistryWorkerMutationContext = {
   /** Only a producer whose write contract preserves task routing, access, and detail. */
   readIdentity?: "preserved";
   taskRowsWritten?: () => boolean;
+  assertPublicationOwnerCurrent?: () => void;
   beforeObservers?: (assertCurrent: () => void) => Promise<void>;
   recoverPublication?: (snapshot: TaskRegistryStoreSnapshot) => TaskRecord | undefined;
   onPublished?: (task: TaskRecord) => void;
@@ -87,13 +88,16 @@ export function createTaskRegistryPublicationRecovery(
         return;
       }
       const current = getTaskRegistryProcessState().tasks.get(expected.taskId);
+      if (witness.replaced) {
+        throw new Error("Task publication owner was replaced");
+      }
       if (
-        witness.replaced ||
         witness.writtenTaskIds.has(expected.taskId) ||
         !current ||
         !isEquivalentTaskRecord(current, expected)
       ) {
-        throw (superseded ??= new Error("Task publication was superseded by a current write"));
+        superseded ??= new Error("Task publication was superseded by a current write");
+        throw superseded;
       }
     },
   };
