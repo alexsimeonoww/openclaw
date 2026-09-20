@@ -1,10 +1,34 @@
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import {
   createGatewayMethodRegistry,
   createCoreGatewayMethodDescriptors,
 } from "../gateway/methods/registry.js";
 import { handleGatewayRequest, coreGatewayHandlers } from "../gateway/server-methods.js";
 import type { GatewayClient, GatewayRequestContext } from "../gateway/server-methods/types.js";
+import {
+  getActiveGatewayRootWorkCount,
+  getActiveGatewayRootWorkHolders,
+} from "../process/gateway-work-admission.js";
+import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+
+export async function withReadState(run: () => Promise<void>) {
+  await withOpenClawTestState({ layout: "state-only" }, async () => {
+    try {
+      await run();
+    } finally {
+      const holders = getActiveGatewayRootWorkHolders();
+      if (holders.length) {
+        console.info("Task read cleanup joining owners:", holders);
+      }
+      await closeOpenClawStateDatabaseAsync();
+      expect(
+        getActiveGatewayRootWorkCount(),
+        JSON.stringify(getActiveGatewayRootWorkHolders()),
+      ).toBe(0);
+    }
+  });
+}
 
 export async function requestTasks(ownerKey: string, respond = vi.fn()) {
   const client: GatewayClient = {

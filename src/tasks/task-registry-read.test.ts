@@ -9,17 +9,12 @@ import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-re
 import { createSubagentsTool } from "../agents/tools/subagents-tool.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
-import {
-  getActiveGatewayRootWorkCount,
-  getActiveGatewayRootWorkHolders,
-  resetGatewayWorkAdmission,
-} from "../process/gateway-work-admission.js";
+import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import {
   closeOpenClawStateDatabaseAsync,
   runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
-import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { holdStateDatabaseCoordinator } from "../test-utils/state-database-contention.js";
 import {
   createSubagentTaskBackingDetail,
@@ -38,7 +33,7 @@ import {
   listFreshTasksForOwnerKey,
 } from "./task-registry-query.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
-import { requestTasks } from "./task-registry-read.test-support.js";
+import { requestTasks, withReadState } from "./task-registry-read.test-support.js";
 import { linkTaskToFlowById } from "./task-registry-record-api.js";
 import { tasks, taskProgressBatches } from "./task-registry-state.js";
 import {
@@ -64,24 +59,6 @@ afterEach(() => {
   resetGatewayWorkAdmission();
   subagentRuns.clear();
 });
-
-async function withReadState(run: () => Promise<void>) {
-  await withOpenClawTestState({ layout: "state-only" }, async () => {
-    try {
-      await run();
-    } finally {
-      const holders = getActiveGatewayRootWorkHolders();
-      if (holders.length) {
-        console.info("Task read cleanup joining owners:", holders);
-      }
-      await closeOpenClawStateDatabaseAsync();
-      expect(
-        getActiveGatewayRootWorkCount(),
-        JSON.stringify(getActiveGatewayRootWorkHolders()),
-      ).toBe(0);
-    }
-  });
-}
 
 function emitTool(runId: string, name: string) {
   emitAgentEvent({ runId, stream: "tool", data: { phase: "start", name } });
@@ -180,14 +157,18 @@ describe("task registry read preparation", () => {
     "flow error",
     "retired owner",
     "retired flow owner",
+    "retired flow owner during cancellation",
+    "native consumption",
   ] as const)(
     "settles a registered read after publication supersession at %s",
     async (boundary) => {
       await withReadState(async () => {
         const task = createReadTask("registered-read-superseded");
         const flowBoundary = boundary === "flow follow-up" || boundary === "flow error";
+        const cancellationBoundary = boundary === "retired flow owner during cancellation";
+        const consumed = boundary === "native consumption";
         const flowFailure = new Error("Synthetic flow synchronization failure");
-        if (flowBoundary || boundary === "retired flow owner") {
+        if (flowBoundary || boundary === "retired flow owner" || cancellationBoundary) {
           const flow = expectDefined(createTaskFlowForTask({ task }), "task flow");
           expect(linkTaskToFlowById({ taskId: task.taskId, flowId: flow.flowId })).not.toBeNull();
         }
@@ -206,9 +187,13 @@ describe("task registry read preparation", () => {
         const writes = vi
           .spyOn(store, "runAgentEventMutationAsync")
           .mockImplementation(async (...args) => {
+            if (consumed) {
+              committed.resolve();
+              await release.promise;
+            }
             const receipt = await mutate(...args);
             eventCommitted = true;
-            if (!flowBoundary) {
+            if (!flowBoundary && !cancellationBoundary) {
               committed.resolve();
               await release.promise;
             }
@@ -228,6 +213,15 @@ describe("task registry read preparation", () => {
           }
           return result;
         });
+        const initialMutation = store.runInitialMutationAsync.bind(store);
+        vi.spyOn(store, "runInitialMutationAsync").mockImplementation(async (...args) => {
+          const result = await initialMutation(...args);
+          if (cancellationBoundary && args[1].type === "flows.finalizeTaskCancellation") {
+            committed.resolve();
+            await release.promise;
+          }
+          return result;
+        });
         const publications: string[] = [];
         const stop = onTaskRegistryChange(() => {
           const current = tasks.get(task.taskId);
@@ -243,11 +237,28 @@ describe("task registry read preparation", () => {
           read = requestTasks(task.ownerKey, respond);
           await fenced.promise;
           expect(respond).not.toHaveBeenCalled();
+          if (consumed) {
+            expect(getTaskById(task.taskId)?.toolUseCount).toBe(1);
+            configureTaskFlowRegistryRuntime({ store: { ...getTaskFlowRegistryStore() } });
+            release.resolve();
+            await read;
+            expect(respond.mock.calls[0]).toMatchObject([
+              true,
+              { tasks: [expect.objectContaining({ id: task.taskId, toolUseCount: 1 })] },
+            ]);
+            expect(writes).toHaveBeenCalledOnce();
+            expect(publications).toEqual([task.task]);
+            return;
+          }
           const durable = loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)!;
           const newer = { ...durable, task: "Newer committed task" };
           store.upsertTaskWithDeliveryState({ task: newer });
           publishTaskRecordAfterAtomicStore(newer);
-          if (boundary === "retired owner" || boundary === "retired flow owner") {
+          if (
+            boundary === "retired owner" ||
+            boundary === "retired flow owner" ||
+            cancellationBoundary
+          ) {
             if (boundary === "retired owner") {
               configureTaskRegistryRuntime({ store: { ...store } });
             } else {
@@ -823,7 +834,7 @@ describe("task registry read preparation", () => {
     },
   );
 
-  it("joins the accepted coalescing batches without waiting for a later terminal event", async () => {
+  it.each([1, 8])("prepares %i readers through a fixed event fence", async (readers) => {
     await withReadState(async () => {
       const task = createReadTask("finite-read-fence");
       const firstEntered = createDeferred();
@@ -855,7 +866,9 @@ describe("task registry read preparation", () => {
         emitTool(task.runId!, "first");
         await firstEntered.promise;
         emitTool(task.runId!, "before-read");
-        const prepared = prepareTaskRegistryRead();
+        const prepared = Promise.all(
+          Array.from({ length: readers }, () => prepareTaskRegistryRead()),
+        );
         for (let index = 0; index < 20; index += 1) {
           emitTool(task.runId!, `coalesced-${index}`);
         }
@@ -866,15 +879,18 @@ describe("task registry read preparation", () => {
         });
         releaseFirst.resolve();
         await terminalEntered.promise;
-        const read = expectDefined(
-          await withTestTimeout(prepared, 5_000, "Read joined a later batch"),
-          "prepared task read",
-        );
-        expect(read.getTaskById(task.taskId)).toMatchObject({
-          status: "running",
-          toolUseCount: 22,
-          lastToolName: "coalesced-19",
-        });
+        for (const preparedRead of await withTestTimeout(
+          prepared,
+          5_000,
+          "Read joined a later batch",
+        )) {
+          const read = expectDefined(preparedRead, "prepared task read");
+          expect(read.getTaskById(task.taskId)).toMatchObject({
+            status: "running",
+            toolUseCount: 22,
+            lastToolName: "coalesced-19",
+          });
+        }
         expect(published).toContain("coalesced-19");
         expect(calls).toBe(3);
       } finally {
