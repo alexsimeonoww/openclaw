@@ -31,7 +31,7 @@ describe("conversation position rail", () => {
   beforeEach(installTranscriptDomMocks);
   afterEach(resetTranscriptTestDom);
 
-  it.each(["resize", "focus", "focus-resize", "pointer", "reader"] as const)(
+  it.each(["resize", "resize-jump", "focus", "focus-resize", "pointer", "reader"] as const)(
     "keeps the reader's rail position through %s updates",
     async (scenario) => {
       vi.stubGlobal(
@@ -44,7 +44,9 @@ describe("conversation position rail", () => {
       );
       const transcript = createTestTranscript();
       const container = document.body.appendChild(document.createElement("div"));
-      const activeMessage = vi.fn(() => "message-79");
+      const activeMessage = vi.fn((): string =>
+        scenario === "resize-jump" ? "message-0" : "message-79",
+      );
       const positions = {
         markers: Array.from({ length: 80 }, (_, index) => ({
           id: `message-${index}`,
@@ -90,7 +92,7 @@ describe("conversation position rail", () => {
           },
         },
       });
-      root.scrollTop = 8315;
+      root.scrollTop = scenario === "resize-jump" ? 0 : 8315;
       const flush = async () => {
         marks.dispatchEvent(new Event("scroll"));
         await new Promise<void>((resolve) => {
@@ -99,9 +101,21 @@ describe("conversation position rail", () => {
       };
       try {
         await flush();
-        expect(marks.scrollTop).toBe(677);
+        expect(marks.scrollTop).toBe(scenario === "resize-jump" ? 0 : 677);
         expect(marks.querySelectorAll(".chat-position-rail__marker").length).toBeLessThan(50);
-        if (scenario === "resize") {
+        if (scenario === "resize-jump") {
+          // Initial end navigation can share the frame that reveals the composer.
+          height = 554;
+          marksHeight = 240;
+          root.scrollTop = 8358;
+          activeMessage.mockReturnValue("message-79");
+          await flush();
+          expect(marker(79).getAttribute("aria-current")).toBe("true");
+          expect(Number.parseFloat(marker(79).style.top)).toBeGreaterThanOrEqual(marks.scrollTop);
+          expect(Number.parseFloat(marker(79).style.top) + 12).toBeLessThanOrEqual(
+            marks.scrollTop + marks.clientHeight,
+          );
+        } else if (scenario === "resize") {
           height = 554;
           marksHeight = 240;
           activeMessage.mockReturnValue("message-76");

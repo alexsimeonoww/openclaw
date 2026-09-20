@@ -33,6 +33,8 @@ import {
 } from "./task-backing-authority.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
 import { createManagedTaskFlow, createTaskFlowForTask } from "./task-flow-registry.js";
+import { taskAgentEventMutations } from "./task-registry-agent-events.js";
+import { updateTask } from "./task-registry-mutation.js";
 import {
   getTaskById,
   listTaskRecordPage,
@@ -90,6 +92,41 @@ function createReadTask(runId: string) {
     notifyPolicy: "silent",
     deliveryStatus: "not_applicable",
   });
+}
+
+async function requestTasks(ownerKey: string) {
+  const client: GatewayClient = {
+    connId: "task-read-fixture",
+    connect: {
+      minProtocol: 1,
+      maxProtocol: 1,
+      client: {
+        id: "openclaw-control-ui",
+        version: "test",
+        platform: "test",
+        mode: "webchat",
+      },
+      role: "operator",
+      scopes: ["operator.read"],
+    },
+  };
+  const respond = vi.fn();
+  await handleGatewayRequest({
+    req: {
+      type: "req",
+      id: "task-read",
+      method: "tasks.list",
+      params: { limit: 5, sessionKey: ownerKey },
+    },
+    client,
+    context: { getRuntimeConfig: () => ({}) } as GatewayRequestContext,
+    methodRegistry: createGatewayMethodRegistry(
+      createCoreGatewayMethodDescriptors(coreGatewayHandlers),
+    ),
+    isWebchatConnect: () => false,
+    respond,
+  });
+  return respond;
 }
 
 function createReadProgressBatch() {
@@ -414,42 +451,7 @@ describe("task registry read preparation", () => {
         if (scenario === "active progress") {
           createReadProgressBatch();
         }
-        const registry = createGatewayMethodRegistry(
-          createCoreGatewayMethodDescriptors(coreGatewayHandlers),
-        );
-        const client: GatewayClient = {
-          connId: "task-read-fixture",
-          connect: {
-            minProtocol: 1,
-            maxProtocol: 1,
-            client: {
-              id: "openclaw-control-ui",
-              version: "test",
-              platform: "test",
-              mode: "webchat",
-            },
-            role: "operator",
-            scopes: ["operator.read"],
-          },
-        };
-        const context = { getRuntimeConfig: () => ({}) } as GatewayRequestContext;
-        const request = async () => {
-          const respond = vi.fn();
-          await handleGatewayRequest({
-            req: {
-              type: "req",
-              id: "task-read",
-              method: "tasks.list",
-              params: { limit: 5, sessionKey: task.ownerKey },
-            },
-            client,
-            context,
-            methodRegistry: registry,
-            isWebchatConnect: () => false,
-            respond,
-          });
-          return respond;
-        };
+        const request = () => requestTasks(task.ownerKey);
         emitTool(task.runId!, "warmup");
         await prepareTaskRegistryRead();
         expect((await request()).mock.calls[0]?.[0]).toBe(true);
@@ -503,6 +505,85 @@ describe("task registry read preparation", () => {
           status: pending ? "succeeded" : "running",
           toolUseCount: pending ? 3 : 1,
         });
+      });
+    },
+  );
+
+  it.each(["terminal", "replacement", "ABA"] as const)(
+    "serves registered tasks.list after a committed event publication loses to %s",
+    async (change) => {
+      await withReadState(async () => {
+        const task = createReadTask(`superseded-read-${change}`);
+        const store = getTaskRegistryStore();
+        const mutate = store.runAgentEventMutationAsync.bind(store);
+        const snapshot = store.loadMutationSnapshotAsync.bind(store);
+        const entered = createDeferred();
+        const release = createDeferred();
+        const reading = createDeferred();
+        let committed = false;
+        let held = false;
+        vi.spyOn(store, "runAgentEventMutationAsync").mockImplementation(async (...args) => {
+          const receipt = await mutate(...args);
+          committed = true;
+          return receipt;
+        });
+        vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation(async (...args) => {
+          const result = await snapshot(...args);
+          if (committed && !held) {
+            held = true;
+            entered.resolve();
+            await release.promise;
+          }
+          return result;
+        });
+        emitTool(task.runId!, "committed-tool");
+        const captureFence = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
+        vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementation((admission) => {
+          const fence = captureFence(admission);
+          reading.resolve();
+          return fence;
+        });
+        let read: ReturnType<typeof requestTasks> | undefined;
+        try {
+          await entered.promise;
+          const newer = updateTask(
+            task.taskId,
+            change === "terminal"
+              ? { status: "succeeded", endedAt: Date.now() }
+              : {
+                  task: "Newer title",
+                  ...(change === "replacement" ? { runId: "successor" } : {}),
+                },
+          );
+          expect(newer).not.toBeNull();
+          if (change === "ABA") {
+            expect(updateTask(task.taskId, { task: task.task })).not.toBeNull();
+          }
+          read = requestTasks(task.ownerKey);
+          await reading.promise;
+          release.resolve();
+          expect((await read).mock.calls[0]).toMatchObject([
+            true,
+            {
+              tasks: [
+                {
+                  id: task.taskId,
+                  status: change === "terminal" ? "completed" : "running",
+                  title: change === "replacement" ? "Newer title" : task.task,
+                  toolUseCount: 1,
+                },
+              ],
+            },
+          ]);
+          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+            status: change === "terminal" ? "succeeded" : "running",
+            task: change === "replacement" ? "Newer title" : task.task,
+            toolUseCount: 1,
+          });
+        } finally {
+          release.resolve();
+          await read;
+        }
       });
     },
   );

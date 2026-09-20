@@ -343,7 +343,9 @@ class ChatPositionRailDirective extends AsyncDirective {
           offset: atEnd ? maxOffset : Math.min(previous.scrollTop, maxOffset),
           atEnd,
         };
-      } else if (previous && viewport.scrollTop !== previous.scrollTop) {
+      }
+      // Navigation and a resize can arrive in the same observer delivery.
+      if (previous && viewport.scrollTop !== previous.scrollTop) {
         const target = this.resizeScrollTarget?.offset;
         // Smooth resize compensation crosses intermediate offsets before its target.
         // The transcript input owner above retires it when the reader takes over.
