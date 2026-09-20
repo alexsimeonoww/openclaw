@@ -7,9 +7,8 @@ import { subagentRuns } from "../agents/subagents/registry/subagent-registry-mem
 import { settleRequesterTurnAfterSessionSpawns } from "../agents/subagents/registry/subagent-registry-requester-yield.js";
 import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import { createSubagentsTool } from "../agents/tools/subagents-tool.js";
-import { emitAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
-import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
 import {
   closeOpenClawStateDatabaseAsync,
   runOpenClawStateWriteTransaction,
@@ -33,7 +32,12 @@ import {
   listFreshTasksForOwnerKey,
 } from "./task-registry-query.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
-import { requestTasks, withReadState } from "./task-registry-read.test-support.js";
+import {
+  createReadTask,
+  requestTasks,
+  resetReadState,
+  withReadState,
+} from "./task-registry-read.test-support.js";
 import { linkTaskToFlowById } from "./task-registry-record-api.js";
 import { tasks, taskProgressBatches } from "./task-registry-state.js";
 import {
@@ -43,35 +47,14 @@ import {
 } from "./task-registry.store.js";
 import { loadTaskRegistryStateFromSqliteReadOnly } from "./task-registry.store.sqlite.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
-import {
-  configureTaskFlowRegistryRuntime,
-  resetTaskFlowRegistryForTests,
-  resetTaskRegistryForTests,
-} from "./task-runtime.test-helpers.js";
+import { configureTaskFlowRegistryRuntime } from "./task-runtime.test-helpers.js";
 
 vi.mock("node:timers/promises", { spy: true });
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  resetTaskRegistryForTests({ persist: false });
-  resetTaskFlowRegistryForTests({ persist: false });
-  resetAgentEventsForTest({ preserveListeners: true });
-  resetGatewayWorkAdmission();
-  subagentRuns.clear();
-});
+afterEach(resetReadState);
 
 function emitTool(runId: string, name: string) {
   emitAgentEvent({ runId, stream: "tool", data: { phase: "start", name } });
-}
-
-function createReadTask(runId: string) {
-  return createTaskFixture("cli", {
-    runId,
-    task: "Read accepted events",
-    status: "running",
-    notifyPolicy: "silent",
-    deliveryStatus: "not_applicable",
-  });
 }
 
 function createReadProgressBatch() {
@@ -430,6 +413,7 @@ describe("task registry read preparation", () => {
             );
           }
           expect(await timer).toBe(0);
+          holder.release();
           expect(await pending).toMatchObject(
             surface === "fresh owner"
               ? [
@@ -603,6 +587,7 @@ describe("task registry read preparation", () => {
           }
           read = request();
           expect(await timer).toBe(0);
+          holder.release();
           expect((await read).mock.calls[0]).toMatchObject([
             true,
             {

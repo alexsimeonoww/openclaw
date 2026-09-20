@@ -148,9 +148,6 @@ async function registerCollector(id: string, childSessionKey = key, agentId = "m
 }
 
 afterEach(async () => {
-  await taskRegistryListener.captureTaskRegistryReadFence(
-    captureOpenClawStateWorkerContext().admission,
-  );
   await settleSubagentRegistryPersistenceWork();
   vi.restoreAllMocks();
   restoreRegisteredAgentHarnesses(harnesses);
@@ -331,9 +328,6 @@ async function settleCollectorCleanup(id: string) {
   } finally {
     unsubscribe();
   }
-  await taskRegistryListener.captureTaskRegistryReadFence(
-    captureOpenClawStateWorkerContext().admission,
-  );
   await settleSubagentRegistryPersistenceWork();
 }
 
@@ -574,9 +568,6 @@ test("reset cannot publish while a terminal completion owns an awaited capture",
     await expectDefined(completion.mock.results[0]?.value, "completion attempt");
     const deletion = await deletionStarted.promise;
     await deletion.completion;
-    await taskRegistryListener.captureTaskRegistryReadFence(
-      captureOpenClawStateWorkerContext().admission,
-    );
     await settleSubagentRegistryPersistenceWork();
   }
 });
@@ -600,9 +591,6 @@ test("a retained kill claim cannot revive durably revoked session cleanup", asyn
     stream: "lifecycle",
     data: { phase: "end", aborted: true, stopReason: "aborted", endedAt: Date.now() },
   });
-  await taskRegistryListener.captureTaskRegistryReadFence(
-    captureOpenClawStateWorkerContext().admission,
-  );
   await settleSubagentRegistryPersistenceWork();
   expect(loadSubagentRegistryFromSqlite().get(id)?.execution.suppressSessionEffects).toBe(true);
   await testing.sweepOnceForTests();

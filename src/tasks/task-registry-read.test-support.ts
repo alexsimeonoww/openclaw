@@ -1,16 +1,24 @@
 import { expect, vi } from "vitest";
+import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
 import {
   createGatewayMethodRegistry,
   createCoreGatewayMethodDescriptors,
 } from "../gateway/methods/registry.js";
 import { handleGatewayRequest, coreGatewayHandlers } from "../gateway/server-methods.js";
 import type { GatewayClient, GatewayRequestContext } from "../gateway/server-methods/types.js";
+import { resetAgentEventsForTest } from "../infra/agent-events.js";
 import {
   getActiveGatewayRootWorkCount,
   getActiveGatewayRootWorkHolders,
+  resetGatewayWorkAdmission,
 } from "../process/gateway-work-admission.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { createTaskFixture } from "./task-registry.test-support.js";
+import {
+  resetTaskFlowRegistryForTests,
+  resetTaskRegistryForTests,
+} from "./task-runtime.test-helpers.js";
 
 export async function withReadState(run: () => Promise<void>) {
   await withOpenClawTestState({ layout: "state-only" }, async () => {
@@ -62,4 +70,23 @@ export async function requestTasks(ownerKey: string, respond = vi.fn()) {
     respond,
   });
   return respond;
+}
+
+export function resetReadState() {
+  vi.restoreAllMocks();
+  resetTaskRegistryForTests({ persist: false });
+  resetTaskFlowRegistryForTests({ persist: false });
+  resetAgentEventsForTest({ preserveListeners: true });
+  resetGatewayWorkAdmission();
+  subagentRuns.clear();
+}
+
+export function createReadTask(runId: string) {
+  return createTaskFixture("cli", {
+    runId,
+    task: "Read accepted events",
+    status: "running",
+    notifyPolicy: "silent",
+    deliveryStatus: "not_applicable",
+  });
 }
