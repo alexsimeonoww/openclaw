@@ -8,6 +8,19 @@ import {
   readVisibleSessionTranscriptMessageEntries,
 } from "openclaw/plugin-sdk/session-transcript-runtime";
 import { describe, expect, it, vi, type MockInstance } from "vitest";
+import {
+  HOST_KEY,
+  HOST_MODEL,
+  HOST_PROFILE,
+  LIVE,
+  NATIVE_KEY,
+  NATIVE_MODEL,
+  OTHER_PROFILE,
+  SUMMARY,
+  withNativeFixture,
+  type Cleanup,
+  type NativeFixture,
+} from "../test-support/settled-turn-finalizer.native.js";
 import * as authBridge from "./auth-bridge.js";
 import { runBoundedCodexAppServerTurn } from "./bounded-turn.js";
 import { CodexAppServerClient } from "./client.js";
@@ -35,19 +48,6 @@ import {
 } from "./session-binding.test-helpers.js";
 import * as settledContext from "./settled-turn-context.js";
 import { runCodexSettledTurnFinalization } from "./settled-turn-finalizer.js";
-import {
-  HOST_KEY,
-  HOST_MODEL,
-  HOST_PROFILE,
-  LIVE,
-  NATIVE_KEY,
-  NATIVE_MODEL,
-  OTHER_PROFILE,
-  SUMMARY,
-  withNativeFixture,
-  type Cleanup,
-  type NativeFixture,
-} from "./settled-turn-finalizer.native.test-support.js";
 import * as sharedClients from "./shared-client.js";
 import type { CodexAppServerClientFactory } from "./shared-client.js";
 import { runCodexAppServerSideQuestion } from "./side-question.js";
@@ -833,7 +833,10 @@ describe.skipIf(process.platform === "win32")(
             );
             if (hidden) {
               expect(
-                transcriptBefore.filter((entry) => entry.message.content === params.prompt),
+                transcriptBefore.filter(
+                  (entry) =>
+                    entry.message.role === "user" && entry.message.content === params.prompt,
+                ),
               ).toEqual([
                 expect.objectContaining({
                   message: expect.objectContaining({

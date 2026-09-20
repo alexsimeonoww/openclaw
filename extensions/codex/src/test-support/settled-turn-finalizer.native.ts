@@ -4,8 +4,8 @@ import path from "node:path";
 import type { AuthProfileStore } from "openclaw/plugin-sdk/agent-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { expect, vi } from "vitest";
-import { createCodexNativeTestState } from "./native-app-server.test-support.js";
-import { isJsonObject, type JsonObject } from "./protocol.js";
+import { createCodexNativeTestState } from "../app-server/native-app-server.test-support.js";
+import { isJsonObject, type JsonObject } from "../app-server/protocol.js";
 
 export const NATIVE_MODEL = "gpt-5.6-sol";
 export const HOST_MODEL = "gpt-5.6-terra";
@@ -57,7 +57,7 @@ async function createNativeFixture(
     request.on("data", (chunk: string) => {
       body += chunk;
     });
-    request.on("end", async () => {
+    const respond = async () => {
       try {
         if (request.url !== "/v1/responses" || request.method !== "POST") {
           response.writeHead(404).end();
@@ -181,6 +181,9 @@ async function createNativeFixture(
         failures.push(error);
         response.writeHead(500).end();
       }
+    };
+    request.on("end", () => {
+      void respond();
     });
   });
   cleanups.push(async () => {

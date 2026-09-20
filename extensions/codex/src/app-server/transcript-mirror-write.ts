@@ -149,7 +149,7 @@ export async function mirror(params: {
         const transcriptMessage = {
           ...attachCodexMirrorAttestation(ownedMessage, sourceFingerprint),
           ...(idempotencyKey ? { idempotencyKey } : {}),
-        } as AgentMessage;
+        };
         if (idempotencyKey && mirrorFacts.existingIdempotencyKeys.has(idempotencyKey)) {
           const persistedMessage = mirrorFacts.messagesByIdempotencyKey.get(idempotencyKey);
           const persistedAnchor = mirrorFacts.anchorsByIdempotencyKey.get(idempotencyKey);
@@ -213,14 +213,12 @@ export async function mirror(params: {
           runtimeMessage: nextMessage,
           preparedMessage: preparedUserMessage,
         });
-        let messageToAppend = (
-          idempotencyKey
-            ? {
-                ...attachCodexMirrorAttestation(restoredMessage, sourceFingerprint),
-                idempotencyKey,
-              }
-            : attachCodexMirrorAttestation(restoredMessage, sourceFingerprint)
-        ) as AgentMessage;
+        let messageToAppend = idempotencyKey
+          ? {
+              ...attachCodexMirrorAttestation(restoredMessage, sourceFingerprint),
+              idempotencyKey,
+            }
+          : attachCodexMirrorAttestation(restoredMessage, sourceFingerprint);
         if (mirrorIdentity) {
           // Hooks may replace the whole message. Restore the provider-owned
           // identity so retries cannot turn a stale idempotency hit into evidence.
@@ -253,8 +251,9 @@ export async function mirror(params: {
         // Whole-message hooks can replace metadata, but cannot erase source-owned taint.
         messageToAppend = applyCodexTranscriptTaint(messageToAppend, taint);
         messageToAppend = projectAgentHarnessTranscriptMessageForDisplay({
-          hidden: (message as { display?: boolean }).display === false,
+          hidden: false,
           message: messageToAppend,
+          sourceMessage: message,
         });
         assertWritable();
         const {
