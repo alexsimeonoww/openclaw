@@ -2,16 +2,18 @@ import { readAgentRuntimeRestrictionErrorDetails } from "../../../../packages/ga
 import { createDeferredCore } from "../../../../src/shared/deferred.js";
 import type { ApplicationContext } from "../../app/context.ts";
 import { t } from "../../i18n/index.ts";
+import { registerModelControlsEnglish } from "../../i18n/locales/en-model-controls.ts";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import type { SessionCreateOutcome } from "../../lib/sessions/create.ts";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
 import { showToast } from "../../lib/toast.ts";
-import { confirmNativeRuntimePermissionRecovery } from "../chat/chat-settings-patches.ts";
 import { buildInitialChatSubmission } from "../chat/user-message-content.ts";
 import type { InstantThreadHandoff } from "./instant-thread-handoff.ts";
 import { retainRejectedInitialTurn } from "./rejected-initial-turn.ts";
 import type { StartedSessionNavigation } from "./started-session-navigation.ts";
+
+registerModelControlsEnglish();
 
 /** Transfer accepted or rejected first-turn display through the existing owners. */
 type InitialTurn = {
@@ -115,6 +117,9 @@ export async function completeInitialSessionTurn(
         context.gateway.snapshot.hello === snapshot.hello &&
         areUiSessionKeysEquivalent(context.gateway.snapshot.sessionKey, key);
       try {
+        // Load consent only for refused first turns, after capturing the navigation owner.
+        const { confirmNativeRuntimePermissionRecovery } =
+          await import("../chat/chat-native-runtime-recovery.ts");
         const recovered = await confirmNativeRuntimePermissionRecovery(
           { sessions: context.sessions, hello: snapshot.hello },
           key,

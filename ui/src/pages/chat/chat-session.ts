@@ -7,6 +7,7 @@ import { normalizeThinkLevel } from "../../../../src/auto-reply/thinking.shared.
 import { GatewayRequestError } from "../../api/gateway.ts";
 import type { FastMode, GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
+import { registerModelControlsEnglish } from "../../i18n/locales/en-model-controls.ts";
 import { resolveChatModelOverrideValue } from "../../lib/chat/model-select-state.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { isSessionRuntimePinned } from "../../lib/model-runtime-choice.ts";
@@ -26,12 +27,10 @@ import {
   isUiSelectedGlobalSessionKey,
   resolveUiSelectedGlobalAgentId,
 } from "../../lib/sessions/session-key.ts";
-import {
-  confirmNativeRuntimePermissionRecovery,
-  getPendingChatPickerPatch,
-  patchChatSessionSettings,
-} from "./chat-settings-patches.ts";
+import { getPendingChatPickerPatch, patchChatSessionSettings } from "./chat-settings-patches.ts";
 export { getPendingChatPickerPatch };
+
+registerModelControlsEnglish();
 
 type ChatSessionListHost = {
   sessionsArchivedFilter?: SessionArchivedFilter;
@@ -321,6 +320,9 @@ async function confirmChatNativeRuntimeRecovery(
     setChatError(host, `${explanation} ${t("chat.nativeRuntimeRecovery.chooseAnother")}`, true);
   const canRecover = () => ownsSelection() && selectionUnchanged();
   try {
+    // Consent is a refusal-only action, not part of ordinary settings or send startup.
+    const { confirmNativeRuntimePermissionRecovery } =
+      await import("./chat-native-runtime-recovery.ts");
     const recovered = await confirmNativeRuntimePermissionRecovery(
       host,
       targetSessionKey,
