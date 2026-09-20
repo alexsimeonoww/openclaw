@@ -7,7 +7,7 @@ import type { McpServerConfig } from "../config/types.mcp.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
 import {
-  closeOpenClawStateDatabaseByPathAsync,
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
 } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
@@ -20,8 +20,12 @@ import { persistClawPackageRef } from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawSourceIdentity } from "./types.js";
 
-afterEach(() => closeOpenClawStateDatabaseForTest());
+// Vitest unwinds hooks in reverse order; drain SQLite before removing its files.
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+afterEach(async () => {
+  await closeOpenClawStateDatabaseAsync();
+  closeOpenClawStateDatabaseForTest();
+});
 
 function snapshotMcpServers(config: OpenClawConfig): Record<string, Record<string, unknown>> {
   return structuredClone(config.mcp?.servers ?? {}) as Record<string, Record<string, unknown>>;
@@ -222,8 +226,8 @@ describe("collectClawStateHealthFindings", () => {
 
   it("does not change existing database bytes, metadata, schema, or journal mode", async () => {
     const current = await installFixture({ withMcp: true, withCron: true });
+    await closeOpenClawStateDatabaseAsync();
     const databasePath = resolveOpenClawStateSqlitePath(current.env);
-    await closeOpenClawStateDatabaseByPathAsync(databasePath);
     const beforeBytes = await readFile(databasePath);
     const beforeStat = await stat(databasePath);
     const beforeDb = new DatabaseSync(databasePath, { readOnly: true });
