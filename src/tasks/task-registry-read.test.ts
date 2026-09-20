@@ -180,14 +180,16 @@ describe("task registry read preparation", () => {
     "flow error",
     "retired owner",
     "retired flow owner",
+    "retired flow owner during cancellation",
   ] as const)(
     "settles a registered read after publication supersession at %s",
     async (boundary) => {
       await withReadState(async () => {
         const task = createReadTask("registered-read-superseded");
         const flowBoundary = boundary === "flow follow-up" || boundary === "flow error";
+        const cancellationBoundary = boundary === "retired flow owner during cancellation";
         const flowFailure = new Error("Synthetic flow synchronization failure");
-        if (flowBoundary || boundary === "retired flow owner") {
+        if (flowBoundary || boundary === "retired flow owner" || cancellationBoundary) {
           const flow = expectDefined(createTaskFlowForTask({ task }), "task flow");
           expect(linkTaskToFlowById({ taskId: task.taskId, flowId: flow.flowId })).not.toBeNull();
         }
@@ -208,7 +210,7 @@ describe("task registry read preparation", () => {
           .mockImplementation(async (...args) => {
             const receipt = await mutate(...args);
             eventCommitted = true;
-            if (!flowBoundary) {
+            if (!flowBoundary && !cancellationBoundary) {
               committed.resolve();
               await release.promise;
             }
@@ -225,6 +227,15 @@ describe("task registry read preparation", () => {
             if (boundary === "flow error") {
               throw flowFailure;
             }
+          }
+          return result;
+        });
+        const initialMutation = store.runInitialMutationAsync.bind(store);
+        vi.spyOn(store, "runInitialMutationAsync").mockImplementation(async (...args) => {
+          const result = await initialMutation(...args);
+          if (cancellationBoundary && args[1].type === "flows.finalizeTaskCancellation") {
+            committed.resolve();
+            await release.promise;
           }
           return result;
         });
@@ -247,7 +258,11 @@ describe("task registry read preparation", () => {
           const newer = { ...durable, task: "Newer committed task" };
           store.upsertTaskWithDeliveryState({ task: newer });
           publishTaskRecordAfterAtomicStore(newer);
-          if (boundary === "retired owner" || boundary === "retired flow owner") {
+          if (
+            boundary === "retired owner" ||
+            boundary === "retired flow owner" ||
+            cancellationBoundary
+          ) {
             if (boundary === "retired owner") {
               configureTaskRegistryRuntime({ store: { ...store } });
             } else {
