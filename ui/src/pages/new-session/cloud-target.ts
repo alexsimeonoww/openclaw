@@ -92,6 +92,20 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
   const description = params.compact ? undefined : params.description;
   const accessibleBlocker = params.compact && params.disabled && !params.hideDetails;
   const touchDetails = params.compact && !params.disabled && !params.hideDetails;
+  const accessibilityHints = [
+    params.suggested ? t("newSession.machineDefault") : undefined,
+    params.accessibleProvider
+      ? t("newSession.cloudWorkerProvider", { provider: params.accessibleProvider })
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const accessibleDescription = [
+    accessibilityHints,
+    params.accessibleProvider ? unavailableReason : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const row = html`
     <button
       type="button"
@@ -99,21 +113,9 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
         description ? "session-menu__item--described" : ""
       } ${params.compact ? "new-session-page__environment-option" : ""}"
       data-suggested=${params.suggested ? "true" : nothing}
-      aria-description=${params.suggested ? t("newSession.machineDefault") : nothing}
+      aria-description=${accessibleDescription || nothing}
       data-value=${params.value}
       data-popover=${params.keepOpen || accessibleBlocker ? nothing : "close"}
-      aria-label=${
-        params.accessibleProvider
-          ? [
-              params.label,
-              t("newSession.cloudWorkerProvider", { provider: params.accessibleProvider }),
-              params.selectedSummary,
-              description,
-            ]
-              .filter(Boolean)
-              .join(", ")
-          : nothing
-      }
       aria-pressed=${String(params.checked)}
       title=${params.compact ? nothing : (params.title ?? nothing)}
       ?disabled=${submitting || (Boolean(params.disabled) && !accessibleBlocker)}
@@ -202,6 +204,7 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
           }
         </div>
         <div slot="content" class="new-session-page__environment-card">
+          ${accessibilityHints ? html`<span hidden>${accessibilityHints}, </span>` : nothing}
           ${
             unavailableReason
               ? html`<span>${formatUnavailableReason(unavailableReason, params.remediation)}</span>`
@@ -335,6 +338,9 @@ export function renderCloudProfileMenuItems(params: {
         >
           ${item}
           <div slot="content">
+            <span hidden
+              >${t("newSession.cloudWorkerProvider", { provider: presentation.label })}</span
+            >
             ${renderCloudConfiguration({
               profile,
               operatingSystems: profile.operatingSystems ?? [],

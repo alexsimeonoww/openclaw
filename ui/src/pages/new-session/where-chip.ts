@@ -302,11 +302,12 @@ export function renderWhereChip(params: {
         class="new-session-page__trigger ${
           params.popoverHiding ? "new-session-page__trigger--hiding" : ""
         }"
-        aria-label="${t("newSession.where")}: ${label}${configurationSummary ? `, ${configurationSummary}` : ""}${
+        aria-label="${t("newSession.where")}: ${label}${configurationSummary ? `, ${configurationSummary}` : ""}"
+        aria-description=${
           params.state.kind === "cloud" && cloudPresentation.label
-            ? `, ${t("newSession.cloudWorkerProvider", { provider: cloudPresentation.label })}`
-            : ""
-        }"
+            ? t("newSession.cloudWorkerProvider", { provider: cloudPresentation.label })
+            : nothing
+        }
         data-cloud-profile=${params.cloudProfileId || nothing}
         data-machine-class=${params.machineClass || nothing}
         data-os=${params.os || nothing}
