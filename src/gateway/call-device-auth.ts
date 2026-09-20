@@ -47,6 +47,7 @@ export async function loadStoredOperatorDeviceAuthToken(
   deviceIdentity: DeviceIdentity | null,
   deviceAuthScope?: string,
   sharedStateMode?: "read-only",
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<DeviceAuthEntry | null> {
   if (!deviceIdentity) {
     return null;
@@ -59,7 +60,7 @@ export async function loadStoredOperatorDeviceAuthToken(
         gatewayScope: deviceAuthScope,
         deviceId: deviceIdentity.deviceId,
         role: "operator",
-        env: process.env,
+        env,
       });
     }
     const loadToken =
@@ -67,7 +68,7 @@ export async function loadStoredOperatorDeviceAuthToken(
     return await loadToken({
       deviceId: deviceIdentity.deviceId,
       role: "operator",
-      env: process.env,
+      env,
     });
   } catch {
     return null;

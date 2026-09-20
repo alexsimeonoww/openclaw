@@ -111,7 +111,10 @@ export type GatewayRequestFunction = <T = Record<string, unknown>>(
   opts?: GatewayClientRequestOptions,
 ) => Promise<T>;
 
-type CallGatewayBaseOptions = Pick<GatewayClientOptions, "caps" | "clientName" | "mode"> & {
+type CallGatewayBaseOptions = Pick<
+  GatewayClientOptions,
+  "caps" | "clientName" | "mode" | "preparedDeviceAuth"
+> & {
   url?: string;
   /** Require this resolved endpoint without overriding target selection or authentication. */
   expectUrl?: string;
@@ -1120,9 +1123,9 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
         ? null
         : resolveDeviceIdentityForGatewayCall(opts.sharedStateMode)
       : opts.deviceIdentity;
-  let storedAuth: DeviceAuthEntry | null | undefined;
+  let storedAuth: DeviceAuthEntry | null | undefined = opts.preparedDeviceAuth;
   if (useStoredDeviceAuth) {
-    storedAuth = await loadStoredOperatorDeviceAuthToken(
+    storedAuth ??= await loadStoredOperatorDeviceAuthToken(
       deviceIdentity,
       deviceAuthScope,
       opts.sharedStateMode,
