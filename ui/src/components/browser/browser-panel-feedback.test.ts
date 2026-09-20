@@ -13,20 +13,27 @@ setupBrowserPanelTestCleanup();
 describe("Browser panel input feedback", () => {
   it("refreshes fallback feedback during continuous input instead of waiting for idle", async () => {
     vi.useFakeTimers();
-    const { client } = createBrowserClient(async () => ({ ok: true }));
+    stubScreenshotMedia();
+    let captures = 0;
+    const { client } = createBrowserClient(async (envelope) => {
+      if (envelope.path === "/screenshot") {
+        captures += 1;
+        return { path: "/latest.png", targetId: "raw-a", url: "https://example.test/latest" };
+      }
+      return createBrowserPanelTestMetrics("https://example.test/latest", "Latest");
+    });
     const controller = createBrowserPanelTestController(client, "tab-a");
-    const refresh = vi.spyOn(controller, "refreshView").mockResolvedValue();
 
     for (let index = 0; index < 4; index += 1) {
       controller.handleViewportKeydown(new KeyboardEvent("keydown", { key: "a" }));
       await vi.advanceTimersByTimeAsync(100);
     }
 
-    expect(refresh).toHaveBeenCalledOnce();
-    expect(refresh).toHaveBeenCalledWith("tab-a", controller.operations.epoch);
+    expect(captures).toBe(1);
+    expect(controller.view?.url).toBe("https://example.test/latest");
     controller.handleViewportKeydown(new KeyboardEvent("keydown", { key: "b" }));
     await vi.advanceTimersByTimeAsync(350);
-    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(captures).toBe(2);
     controller.hostDisconnected();
   });
 
