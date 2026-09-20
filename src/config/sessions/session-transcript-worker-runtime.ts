@@ -160,6 +160,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             | "session-entry-list"
             | "usage-cache"
             | "transcript-hydration"
+            | "current-turn-entry"
           >(reply),
         );
         if (reply.ok && reply.closedHistoryDatabase) {
