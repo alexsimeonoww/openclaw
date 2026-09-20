@@ -121,3 +121,22 @@ it.each(["inputs", "outputs"] as const)(
     expect(fs.existsSync(directory)).toBe(false);
   },
 );
+
+it("rejects compiler-time source mutation even when the original bytes return", async () => {
+  const directory = tempDirs.make("vitest-worker-source-change-");
+  const filename = path.join(directory, "input.ts");
+  const original = "export const value = 1;\n";
+  fs.writeFileSync(filename, original);
+  const manifest: VitestWorkerManifest = {
+    identity: "source-change-fixture",
+    inputs: { [filename]: hashVitestWorkerArtifact(original) },
+    outputs: {},
+    durationMs: 0,
+  };
+  const inputsChangedAfter = Date.now();
+  fs.writeFileSync(filename, "export const value = 2;\n");
+  fs.writeFileSync(filename, original);
+  await expect(
+    verifyVitestWorkerArtifacts(directory, manifest, { inputsChangedAfter }),
+  ).rejects.toThrow("Source changed during compiled subprocess invocation");
+});
