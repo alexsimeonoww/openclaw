@@ -43,7 +43,11 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
   const runSecond = record("run-second", { runId: "shared-run", createdAt: 200 });
   const literalEscape = record("run\\u0000first", { runId: "shared-run" });
   const child = record("child", { childSessionKey: " shared-child " });
-  const unrelated = record("unrelated", { runId: " ", childSessionKey: " " });
+  const unrelated = record("unrelated", {
+    runId: " ",
+    childSessionKey: " ",
+    requesterSessionKey: "requester-only",
+  });
   const broad = Array.from({ length: 64 }, (_, index) =>
     record(`broad-${String(index).padStart(3, "0")}`, { runId: "broad-run" }),
   );
@@ -99,21 +103,44 @@ it("preserves ordered scoped tasks and their exact delivery rows", async () => {
             left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0,
           ),
       );
-      if (!scope.runId?.trim() && !scope.childSessionKey?.trim()) {
-        const taskQueries = prepare.mock.calls
-          .map(([query]) => query)
-          .filter((query) => query.includes('from "task_runs"'));
-        expect(taskQueries.length).toBeGreaterThan(0);
-        for (const query of taskQueries) {
-          const plan = db
-            .prepare(`EXPLAIN QUERY PLAN ${query}`)
-            .all()
-            .map((row) => row.detail)
-            .join("\n");
-          expect(plan).toContain("SEARCH task_runs USING INDEX");
-          expect(plan).not.toContain("SCAN task_runs");
-        }
+      const taskQueries = prepare.mock.calls
+        .map(([query]) => query)
+        .filter((query) => query.includes('from "task_runs"'));
+      expect(taskQueries.length).toBeGreaterThan(0);
+      for (const query of taskQueries) {
+        const plan = db
+          .prepare(`EXPLAIN QUERY PLAN ${query}`)
+          .all(
+            scope.taskId,
+            ...[scope.runId?.trim(), scope.childSessionKey?.trim()].filter(
+              (value): value is string => Boolean(value),
+            ),
+          )
+          .map((row) => row.detail)
+          .join("\n");
+        expect(plan).toContain("SEARCH task_runs USING INDEX");
+        expect(plan).not.toContain("SCAN task_runs");
       }
+    }
+    for (const [key, expected] of [
+      ["requester-only", true],
+      ["agent:main:fixture", true],
+      [" shared-child ", true],
+      ["absent", false],
+    ] as const) {
+      prepare.mockClear();
+      expect(tasks.hasTaskSessionOwnerInDatabase(db, key)).toBe(expected);
+      const ownershipQueries = prepare.mock.calls
+        .map(([query]) => query)
+        .filter((query) => query.includes('from "task_runs"'));
+      expect(ownershipQueries).toHaveLength(1);
+      const plan = db
+        .prepare(`EXPLAIN QUERY PLAN ${ownershipQueries[0]}`)
+        .all(key, key, key, 1)
+        .map((row) => row.detail)
+        .join("\n");
+      expect(plan).toContain("SEARCH task_runs USING INDEX");
+      expect(plan).not.toContain("SCAN task_runs");
     }
   } finally {
     prepare.mockRestore();
