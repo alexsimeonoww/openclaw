@@ -98,6 +98,7 @@ import {
 import { ensureAgentProvenanceSchema } from "./agent-provenance.schema.js";
 import { recordBackupRunInDatabase } from "./backup-run-records.kernel.js";
 import { readConfigMachineState } from "./config-machine-state.js";
+import { readRegisteredAgentDatabases } from "./openclaw-agent-db-registry-listing.js";
 import { executeAgentDatabaseCleanupCommand } from "./openclaw-agent-execution-cleanup.worker.js";
 import type { OpenClawStateDatabase } from "./openclaw-state-db-contract.js";
 import { assertOpenClawStateDatabaseOwner } from "./openclaw-state-db-maintenance.js";
@@ -136,6 +137,12 @@ export function executeSharedStateCommand(
       command,
       open(),
       getSqliteWorkerStateContext().environment,
+    );
+  }
+  if (command.type === "agentDatabases.list") {
+    return readRegisteredAgentDatabases(
+      { path: context.databasePath, env: getSqliteWorkerStateContext().environment },
+      false,
     );
   }
   if (command.type === "audit.events.list") {
