@@ -3,6 +3,12 @@ import { expect, it } from "vitest";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { controlUiSessionUrl, installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { chatSessionListResponse } from "./chat-flow.test-support.ts";
+import {
+  installSwarmDiagnostic,
+  logSwarmDiagnostic,
+  type SwarmDiagnosticPane,
+  type SwarmDiagnosticWindow,
+} from "./chat-swarm-lifecycle-diagnostic.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
@@ -68,6 +74,7 @@ suite.define(() => {
         const widget = page.locator('[data-test-id="chat-swarm"]');
         const disclosure = widget.locator("details");
         const summary = disclosure.locator("summary");
+        await installSwarmDiagnostic(page, sessionKey);
         await expect.poll(() => widget.locator(".chat-swarm__task").count()).toBe(viewport.count);
         expect(await widget.locator(".chat-swarm__markers").isVisible()).toBe(true);
         await page.screenshot({ path: path.join(proofDir, "active.png"), animations: "disabled" });
@@ -127,6 +134,12 @@ suite.define(() => {
           )
           .toBe(true);
         const outcomeClearance = await summary.evaluate((element) => {
+          const diagnostic = (window as SwarmDiagnosticWindow).openclawSwarmDiagnostic;
+          if (diagnostic) {
+            diagnostic.expandedDetails = element.parentElement;
+            const pane = element.closest<SwarmDiagnosticPane>("openclaw-chat-pane");
+            diagnostic.expandedEpoch = pane?.state?.connectionEpoch;
+          }
           const outcome = element.parentElement?.querySelector(".chat-swarm__outcome");
           if (!outcome) {
             throw new Error("Expanded Swarm outcome is missing");
@@ -174,13 +187,19 @@ suite.define(() => {
           agentId: "main",
           reason: "swarm",
         });
-        await expect
-          .poll(() =>
-            widget
-              .getByText("Child runs finished. Check the conversation for the final response.")
-              .isVisible(),
-          )
-          .toBe(true);
+        try {
+          await expect
+            .poll(() =>
+              widget
+                .getByText("Child runs finished. Check the conversation for the final response.")
+                .isVisible(),
+            )
+            .toBe(true);
+        } finally {
+          await logSwarmDiagnostic(page, gateway, sessionKey).catch(() => {
+            console.info("[swarm-final-diagnostic] unavailable");
+          });
+        }
         await page.screenshot({
           path: path.join(proofDir, "settled-details.png"),
           animations: "disabled",
