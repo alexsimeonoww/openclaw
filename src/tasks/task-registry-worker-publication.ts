@@ -103,6 +103,65 @@ export function createTaskRegistryPublicationRecovery(
   };
 }
 
+type TaskRegistryPublicationOutcome =
+  | { kind: "published"; conflicted: boolean }
+  | { kind: "superseded" }
+  | { kind: "failed"; error: unknown };
+
+/** Retire stale publication without hiding mutation failures or a replaced runtime owner. */
+export async function settleTaskRegistryWorkerPublication(params: {
+  context: TaskRegistryWorkerMutationContext;
+  pending: PendingTaskRegistryMutation;
+  recovery: ReturnType<typeof createTaskRegistryPublicationRecovery> | undefined;
+  mutationSucceeded: boolean;
+  assertRuntimeOwner: () => void;
+  read: () => Promise<TaskRegistryStoreSnapshot>;
+  install: (snapshot: TaskRegistryStoreSnapshot, records?: ReadonlyMap<string, TaskRecord>) => void;
+  emit: (event: () => TaskRegistryObserverEvent) => void;
+  settle: (outcome: TaskRegistryPublicationOutcome) => void;
+}): Promise<void> {
+  const { context, pending, recovery, mutationSucceeded, assertRuntimeOwner } = params;
+  let outcome: TaskRegistryPublicationOutcome;
+  try {
+    claimTaskRegistryPublication(pending, context.publicationRecords());
+    const assertOwner = () => {
+      assertRuntimeOwner();
+      recovery?.assertCurrent();
+    };
+    const { conflicted } = await reconcileTaskRegistryWorkerSnapshot({
+      pending,
+      assertCurrent: assertOwner,
+      read: params.read,
+      install: params.install,
+      recoverPublication: recovery?.recover,
+      taskRowsWritten: context.taskRowsWritten?.(),
+    });
+    recovery?.bindExpected(pending.publication?.records.get(context.scope.taskId));
+    assertOwner();
+    await context.beforeObservers?.(assertOwner);
+    assertOwner();
+    publishTaskRegistryWorkerMutation({
+      pending,
+      forced: context.forcePublish?.(),
+      emit: params.emit,
+      onPublished: context.onPublished,
+    });
+    outcome = { kind: "published", conflicted };
+  } catch (error) {
+    outcome = { kind: "failed", error };
+    if (mutationSucceeded && recovery?.wasSuperseded(error)) {
+      try {
+        assertRuntimeOwner();
+        outcome = { kind: "superseded" };
+      } catch (ownerError) {
+        outcome = { kind: "failed", error: ownerError };
+      }
+    }
+  }
+  // Observer wake microtasks must see retired mutation state before this promise settles.
+  params.settle(outcome);
+}
+
 /** Preserve committed projection writes, including ABA, without restarting the settled mutation. */
 function mergeTaskRegistryWorkerSnapshot(params: {
   scope: TaskRegistryMutationScope;
@@ -155,7 +214,7 @@ function mergeTaskRegistryWorkerSnapshot(params: {
 }
 
 /** Order canonical reads and installs, releasing before effects or observers can await descendants. */
-export async function reconcileTaskRegistryWorkerSnapshot(params: {
+async function reconcileTaskRegistryWorkerSnapshot(params: {
   pending: PendingTaskRegistryMutation;
   assertCurrent: () => void;
   read: () => Promise<TaskRegistryStoreSnapshot>;
@@ -227,7 +286,7 @@ export async function reconcileTaskRegistryWorkerSnapshot(params: {
 }
 
 /** Keep the original baseline registered while observers may synchronously publish other rows. */
-export function publishTaskRegistryWorkerMutation(params: {
+function publishTaskRegistryWorkerMutation(params: {
   pending: PendingTaskRegistryMutation;
   forced?: TaskRecord;
   emit: (event: () => TaskRegistryObserverEvent) => void;
@@ -286,7 +345,7 @@ function inheritPublicationBaseline(pending: PendingTaskRegistryMutation, taskId
 }
 
 /** Receipt rows own publication; broad snapshot selection grants no readiness for sibling rows. */
-export function claimTaskRegistryPublication(
+function claimTaskRegistryPublication(
   pending: PendingTaskRegistryMutation,
   records: ReadonlyMap<string, TaskRecord>,
 ): void {
