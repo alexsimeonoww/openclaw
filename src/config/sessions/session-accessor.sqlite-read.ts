@@ -19,6 +19,7 @@ import { resolveOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.pa
 import type {
   LatestTranscriptAssistantMessage,
   LatestTranscriptAssistantText,
+  SessionTranscriptContextVersion,
   SessionTranscriptReadScope,
   SessionTranscriptEventRow,
   SessionTranscriptStats,
@@ -36,7 +37,6 @@ import { canRebasePreparedAssistantInTransaction } from "./session-accessor.sqli
 import {
   readTranscriptContextVersionInTransaction,
   readTranscriptMutationStateInTransaction,
-  type SessionTranscriptContextVersion,
 } from "./session-accessor.sqlite-transcript-state.js";
 import {
   readTranscriptStatsBatchFromDatabase,
