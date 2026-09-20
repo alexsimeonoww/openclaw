@@ -37,7 +37,7 @@ import { computeFileMatches } from "./chat-sidebar-file-view.ts";
 import type { FileEditorViewHandle } from "./file-editor-view.ts";
 
 type FileSidebarContent = Extract<SidebarContent, { kind: "file" }>;
-type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" }>;
+type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" | "tool-output" }>;
 
 const FILE_WRAP_PREFERENCE_KEY = "openclaw.control.fileView.wrap.v1";
 

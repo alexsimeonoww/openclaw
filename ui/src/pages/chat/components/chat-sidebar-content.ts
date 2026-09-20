@@ -50,7 +50,7 @@ import { renderSidebarFile, type FileViewControls } from "./chat-sidebar-file-vi
 import { isTextAttachment } from "./chat-text-attachment.ts";
 import "./session-diff-panel.ts";
 
-type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" }>;
+type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" | "tool-output" }>;
 
 function renderSidebarAttachment(
   content: Extract<SidebarContent, { kind: "attachment" }>,

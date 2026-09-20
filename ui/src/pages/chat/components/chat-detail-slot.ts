@@ -5,6 +5,7 @@ import type { ChatProps } from "../chat-view.ts";
 import { openSlot, type SidebarLayout } from "../sidebar-layout.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
 import "./chat-sidebar.ts";
+import "./chat-tool-output.ts";
 import { assistantMediaPolicyKey } from "./chat-message-media.ts";
 import { selectSessionWorkspacePreview } from "./chat-session-workspace-state.ts";
 import { openSessionWorkspaceFile, revealSessionWorkspaceFile } from "./chat-session-workspace.ts";
@@ -39,6 +40,14 @@ export function renderChatDetailSlot(params: {
   layout: SidebarLayout;
 }): TemplateResult {
   const { content, host } = params;
+  if (content.kind === "tool-output") {
+    return html`<openclaw-chat-tool-output
+      class="chat-sidebar"
+      .content=${content}
+      .loadFullMessage=${params.chat.loadFullAssistantMessage ?? null}
+      .connectionEpoch=${params.chat.connectionEpoch}
+    ></openclaw-chat-tool-output>`;
+  }
   const taskId = openTaskDetailId(content, params.layout);
   const documents: Partial<Record<SidebarContent["kind"], TemplateResult>> = {
     task:
