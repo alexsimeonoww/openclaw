@@ -337,7 +337,8 @@ class ChatPositionRailDirective extends AsyncDirective {
         if (this.followActive) {
           this.scheduleLayout();
         }
-        const atEnd = this.resizeScrollTarget?.atEnd ?? previous.anchorToEnd;
+        // A measured end supersedes startup's non-end estimate; smooth follow may still be pending.
+        const atEnd = this.resizeScrollTarget?.atEnd || previous.anchorToEnd;
         const maxOffset = Math.max(0, root.scrollHeight - viewport.height);
         this.resizeScrollTarget = {
           offset: atEnd ? maxOffset : Math.min(previous.scrollTop, maxOffset),
