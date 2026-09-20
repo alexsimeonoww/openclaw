@@ -20,11 +20,12 @@ import { persistClawPackageRef } from "./provenance.js";
 import { parseClawManifest } from "./schema.js";
 import type { ClawSourceIdentity } from "./types.js";
 
+// Vitest unwinds hooks in reverse order; drain SQLite before removing its files.
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(async () => {
   await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
 });
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function snapshotMcpServers(config: OpenClawConfig): Record<string, Record<string, unknown>> {
   return structuredClone(config.mcp?.servers ?? {}) as Record<string, Record<string, unknown>>;
