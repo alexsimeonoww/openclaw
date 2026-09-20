@@ -12,6 +12,9 @@ The bundled `typesafe` plugin connects OpenClaw's optional decision model role t
 TypeSafe AI's Jev models. Its models appear in the separate **Decision** picker,
 never in the conversational model picker.
 
+See [Decision models](/concepts/decision-models) for the model role, available
+backends, rubric examples, and provider-neutral plugin API.
+
 The plugin is disabled by default. Bundling or enabling it does not select a
 decision model or schedule background work.
 
