@@ -32,9 +32,7 @@ import type { TaskRegistryRestoreResult } from "./task-registry-restore.worker.j
 import {
   createPendingTaskRegistryMutation,
   createTaskRegistryPublicationRecovery,
-  claimTaskRegistryPublication,
-  publishTaskRegistryWorkerMutation,
-  reconcileTaskRegistryWorkerSnapshot,
+  settleTaskRegistryWorkerPublication,
   type TaskRegistryWorkerMutationContext,
 } from "./task-registry-worker-publication.js";
 import {
@@ -692,53 +690,48 @@ export async function runTaskRegistryWorkerMutation<T>(
   pendingMutations.add(pending);
   dirtyScopes.add(scope);
   bumpTaskRegistryRevision();
+  const assertRuntimeOwner = () => {
+    admission.assertCurrent();
+    if (!isCurrentTaskRegistryDatabase(admission) || getTaskRegistryStore() !== store) {
+      projection.dirty = true;
+      throw new Error("Task registry publication owner is no longer current.");
+    }
+    context.assertPublicationOwnerCurrent?.();
+  };
+  let mutationSucceeded = false;
   try {
-    return await mutate(() => recovery?.begin());
+    const result = await mutate(() => recovery?.begin());
+    mutationSucceeded = true;
+    return result;
   } finally {
     dirtyScopes.add(scope);
     bumpTaskRegistryRevision();
-    try {
-      claimTaskRegistryPublication(pending, context.publicationRecords());
-      const assertOwner = () => {
-        admission.assertCurrent();
-        if (!isCurrentTaskRegistryDatabase(admission) || getTaskRegistryStore() !== store) {
-          projection.dirty = true;
-          throw new Error("Task registry publication owner is no longer current.");
+    await settleTaskRegistryWorkerPublication({
+      context,
+      pending,
+      recovery,
+      mutationSucceeded,
+      assertRuntimeOwner,
+      read: readCurrent,
+      install: (current, records) => installSnapshot(current, scope, false, records),
+      emit: emitTaskRegistryObserverEvent,
+      settle(publication) {
+        try {
+          if (publication.kind === "published" && !publication.conflicted) {
+            dirtyScopes.delete(scope);
+          }
+          // Superseded publication leaves its dirty scope for authoritative read preparation.
+          if (publication.kind === "failed") {
+            context.onPublicationError?.(publication.error);
+            taskRegistryLog.warn("Failed to reconcile managed child task after worker operation", {
+              flowId: scope.flowId,
+              error: publication.error,
+            });
+          }
+        } finally {
+          pendingMutations.delete(pending);
         }
-        recovery?.assertCurrent();
-      };
-      const { conflicted } = await reconcileTaskRegistryWorkerSnapshot({
-        pending,
-        assertCurrent: assertOwner,
-        read: readCurrent,
-        install: (current, records) => installSnapshot(current, scope, false, records),
-        recoverPublication: recovery?.recover,
-        taskRowsWritten: context.taskRowsWritten?.(),
-      });
-      recovery?.bindExpected(pending.publication?.records.get(scope.taskId));
-      assertOwner();
-      await context.beforeObservers?.(assertOwner);
-      assertOwner();
-      publishTaskRegistryWorkerMutation({
-        pending,
-        forced: context.forcePublish?.(),
-        emit: emitTaskRegistryObserverEvent,
-        onPublished: context.onPublished,
-      });
-      if (!conflicted) {
-        dirtyScopes.delete(scope);
-      }
-    } catch (error) {
-      // A newer committed writer owns publication; its predecessor still settled successfully.
-      if (!recovery?.wasSuperseded(error)) {
-        context.onPublicationError?.(error);
-        taskRegistryLog.warn("Failed to reconcile managed child task after worker operation", {
-          flowId: scope.flowId,
-          error,
-        });
-      }
-    } finally {
-      pendingMutations.delete(pending);
-    }
+      },
+    });
   }
 }
