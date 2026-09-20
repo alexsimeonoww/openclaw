@@ -270,11 +270,15 @@ export class BrowserPanelController implements ReactiveController {
       this.setState("errorText", null);
       await action(client);
       if (current() && refreshView) {
-        this.pendingInput.scheduleRefresh(ACTION_REFRESH_DELAY_MS, () => {
-          if (current() && this.activeTargetId) {
-            void this.refreshView(this.activeTargetId, epoch);
-          }
-        });
+        this.pendingInput.scheduleRefresh(
+          ACTION_REFRESH_DELAY_MS,
+          () => {
+            if (current() && this.activeTargetId) {
+              void this.refreshView(this.activeTargetId, epoch);
+            }
+          },
+          () => !this.operations.hasPendingCapture,
+        );
       }
       return current();
     } catch (error) {
