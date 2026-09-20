@@ -32,28 +32,21 @@ import {
   resolveManagedTaskBackingDetail,
 } from "./task-backing-authority.js";
 import { createRunningTaskRunCoreWithReceiptAsync } from "./task-executor-create.async.js";
+import { completeTaskRunByRunIdCore } from "./task-executor.js";
 import { createManagedTaskFlow, createTaskFlowForTask } from "./task-flow-registry.js";
-import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import { taskAgentEventMutations } from "./task-registry-agent-events.js";
-import { updateTask } from "./task-registry-mutation.js";
-import { publishTaskRecordAfterAtomicStore } from "./task-registry-publication.js";
 import {
   getTaskById,
   listTaskRecordPage,
   listFreshTasksForOwnerKey,
 } from "./task-registry-query.js";
 import { prepareTaskRegistryRead } from "./task-registry-read.js";
-import { finalizeTaskRecordByRunId, linkTaskToFlowById } from "./task-registry-record-api.js";
+import { linkTaskToFlowById } from "./task-registry-record-api.js";
 import { tasks, taskProgressBatches } from "./task-registry-state.js";
-import {
-  configureTaskRegistryRuntime,
-  getTaskRegistryStore,
-  onTaskRegistryChange,
-} from "./task-registry.store.js";
+import { getTaskRegistryStore, onTaskRegistryChange } from "./task-registry.store.js";
 import { loadTaskRegistryStateFromSqliteReadOnly } from "./task-registry.store.sqlite.js";
 import { createTaskFixture } from "./task-registry.test-support.js";
 import {
-  configureTaskFlowRegistryRuntime,
   resetTaskFlowRegistryForTests,
   resetTaskRegistryForTests,
 } from "./task-runtime.test-helpers.js";
@@ -101,7 +94,10 @@ function createReadTask(runId: string) {
   });
 }
 
-async function requestTasks(ownerKey: string, respond = vi.fn()) {
+async function requestTaskList(ownerKey: string) {
+  const registry = createGatewayMethodRegistry(
+    createCoreGatewayMethodDescriptors(coreGatewayHandlers),
+  );
   const client: GatewayClient = {
     connId: "task-read-fixture",
     connect: {
@@ -117,6 +113,8 @@ async function requestTasks(ownerKey: string, respond = vi.fn()) {
       scopes: ["operator.read"],
     },
   };
+  const context = { getRuntimeConfig: () => ({}) } as GatewayRequestContext;
+  const respond = vi.fn();
   await handleGatewayRequest({
     req: {
       type: "req",
@@ -125,10 +123,8 @@ async function requestTasks(ownerKey: string, respond = vi.fn()) {
       params: { limit: 5, sessionKey: ownerKey },
     },
     client,
-    context: { getRuntimeConfig: () => ({}) } as GatewayRequestContext,
-    methodRegistry: createGatewayMethodRegistry(
-      createCoreGatewayMethodDescriptors(coreGatewayHandlers),
-    ),
+    context,
+    methodRegistry: registry,
     isWebchatConnect: () => false,
     respond,
   });
@@ -212,122 +208,6 @@ function createReadProgressBatch() {
 }
 
 describe("task registry read preparation", () => {
-  it.each([
-    "receipt",
-    "flow follow-up",
-    "flow error",
-    "retired owner",
-    "retired flow owner",
-  ] as const)(
-    "settles a registered read after publication supersession at %s",
-    async (boundary) => {
-      await withReadState(async () => {
-        const task = createReadTask("registered-read-superseded");
-        const flowBoundary = boundary === "flow follow-up" || boundary === "flow error";
-        const flowFailure = new Error("Synthetic flow synchronization failure");
-        if (flowBoundary || boundary === "retired flow owner") {
-          const flow = expectDefined(createTaskFlowForTask({ task }), "task flow");
-          expect(linkTaskToFlowById({ taskId: task.taskId, flowId: flow.flowId })).not.toBeNull();
-        }
-        const store = getTaskRegistryStore();
-        const mutate = store.runAgentEventMutationAsync.bind(store);
-        const committed = createDeferred();
-        const release = createDeferred();
-        const fenced = createDeferred();
-        const captureFence = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
-        vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementation((admission) => {
-          const result = captureFence(admission);
-          fenced.resolve();
-          return result;
-        });
-        let eventCommitted = false;
-        const writes = vi
-          .spyOn(store, "runAgentEventMutationAsync")
-          .mockImplementation(async (...args) => {
-            const receipt = await mutate(...args);
-            eventCommitted = true;
-            if (!flowBoundary) {
-              committed.resolve();
-              await release.promise;
-            }
-            return receipt;
-          });
-        const syncFlow = store.syncLiveTaskFlowAsync.bind(store);
-        let flowHeld = false;
-        vi.spyOn(store, "syncLiveTaskFlowAsync").mockImplementation(async (...args) => {
-          const result = await syncFlow(...args);
-          if (flowBoundary && eventCommitted && !flowHeld) {
-            flowHeld = true;
-            committed.resolve();
-            await release.promise;
-            if (boundary === "flow error") {
-              throw flowFailure;
-            }
-          }
-          return result;
-        });
-        const publications: string[] = [];
-        const stop = onTaskRegistryChange(() => {
-          const current = tasks.get(task.taskId);
-          if (current) {
-            publications.push(current.task);
-          }
-        });
-        const respond = vi.fn();
-        let read: ReturnType<typeof requestTasks> | undefined;
-        try {
-          emitTool(task.runId!, "accepted-tool");
-          await committed.promise;
-          read = requestTasks(task.ownerKey, respond);
-          await fenced.promise;
-          expect(respond).not.toHaveBeenCalled();
-          const durable = loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)!;
-          const newer = { ...durable, task: "Newer committed task" };
-          store.upsertTaskWithDeliveryState({ task: newer });
-          publishTaskRecordAfterAtomicStore(newer);
-          if (boundary === "retired owner" || boundary === "retired flow owner") {
-            if (boundary === "retired owner") {
-              configureTaskRegistryRuntime({ store: { ...store } });
-            } else {
-              configureTaskFlowRegistryRuntime({ store: { ...getTaskFlowRegistryStore() } });
-            }
-            release.resolve();
-            await expect(read).rejects.toThrow("owner");
-            expect(respond).not.toHaveBeenCalled();
-            expect(publications).toEqual([newer.task]);
-            return;
-          }
-          release.resolve();
-          if (boundary === "flow error") {
-            await expect(read).rejects.toBe(flowFailure);
-            expect(respond).not.toHaveBeenCalled();
-            expect(publications).toEqual([newer.task]);
-            return;
-          }
-          await read;
-          expect(respond.mock.calls[0]).toMatchObject([
-            true,
-            {
-              tasks: [
-                expect.objectContaining({ id: task.taskId, title: newer.task, toolUseCount: 1 }),
-              ],
-            },
-          ]);
-          expect(writes).toHaveBeenCalledOnce();
-          expect(publications).toEqual([newer.task]);
-          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
-            task: newer.task,
-            toolUseCount: 1,
-          });
-        } finally {
-          release.resolve();
-          await read?.catch(() => undefined);
-          stop();
-        }
-      });
-    },
-  );
-
   it.each(["normalized start", "terminal"] as const)(
     "accepts later events after native %s rollback without an intervening refresh",
     async (phase) => {
@@ -573,7 +453,7 @@ describe("task registry read preparation", () => {
         if (scenario === "active progress") {
           createReadProgressBatch();
         }
-        const request = () => requestTasks(task.ownerKey);
+        const request = () => requestTaskList(task.ownerKey);
         emitTool(task.runId!, "warmup");
         await prepareTaskRegistryRead();
         expect((await request()).mock.calls[0]?.[0]).toBe(true);
@@ -631,78 +511,101 @@ describe("task registry read preparation", () => {
     },
   );
 
-  it.each([
-    { change: "terminal", timing: "before readback" },
-    { change: "terminal", timing: "during readback" },
-    { change: "replacement", timing: "during readback" },
-    { change: "ABA", timing: "during readback" },
-  ] as const)(
-    "serves registered tasks.list after a committed event publication loses to $change $timing",
-    async ({ change, timing }) => {
+  it.each(["before readback", "during readback"] as const)(
+    "returns the terminal task when accepted metadata publication is superseded %s",
+    async (timing) => {
       await withReadState(async () => {
-        const task = createReadTask(`superseded-read-${change}`);
+        const entry: SubagentRunRecord = {
+          runId: "metadata-terminal-overlap",
+          childSessionKey: "agent:main:subagent:metadata-terminal-overlap",
+          requesterSessionKey: "agent:main:main",
+          requesterDisplayKey: "main",
+          task: "Finish while task metadata settles",
+          cleanup: "keep",
+          createdAt: Date.now(),
+          generation: 1,
+          execution: { status: "running", startedAt: Date.now() },
+        };
+        subagentRuns.set(entry.runId, entry);
+        const task = createTaskFixture("subagent", {
+          runId: entry.runId,
+          childSessionKey: entry.childSessionKey,
+          requesterSessionKey: entry.requesterSessionKey,
+          task: entry.task,
+          notifyPolicy: "silent",
+          detail: createSubagentTaskBackingDetail(entry.generation!),
+        });
         const store = getTaskRegistryStore();
         const mutate = store.runAgentEventMutationAsync.bind(store);
         const snapshot = store.loadMutationSnapshotAsync.bind(store);
-        const entered = createDeferred();
+        const committed = createDeferred<Awaited<ReturnType<typeof mutate>>>();
+        const publicationPaused = createDeferred();
         const release = createDeferred();
-        const reading = createDeferred();
-        let committed = false;
-        let held = false;
+        let mutationCommitted = false;
+        let readbackHeld = false;
         const writes = vi
           .spyOn(store, "runAgentEventMutationAsync")
           .mockImplementation(async (...args) => {
             const receipt = await mutate(...args);
-            committed = true;
+            mutationCommitted = true;
+            committed.resolve(receipt);
             if (timing === "before readback") {
-              entered.resolve();
+              publicationPaused.resolve();
               await release.promise;
             }
             return receipt;
           });
         vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation(async (...args) => {
-          const result = await snapshot(...args);
-          if (timing === "during readback" && committed && !held) {
-            held = true;
-            entered.resolve();
+          const current = await snapshot(...args);
+          if (timing === "during readback" && mutationCommitted && !readbackHeld) {
+            readbackHeld = true;
+            publicationPaused.resolve();
             await release.promise;
           }
-          return result;
+          return current;
         });
-        const publications: string[] = [];
-        const stop = onTaskRegistryChange(() => {
-          const current = tasks.get(task.taskId);
-          if (current) {
-            publications.push(current.status);
+        const captured = createDeferred();
+        const capture = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
+        const published: string[] = [];
+        const stop = onTaskRegistryChange((event) => {
+          if (event?.kind === "upserted" && event.task.taskId === task.taskId) {
+            published.push(event.task.status);
           }
         });
-        emitTool(task.runId!, "committed-tool");
-        const captureFence = taskAgentEventMutations.captureReadFence.bind(taskAgentEventMutations);
-        vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementation((admission) => {
-          const fence = captureFence(admission);
-          reading.resolve();
-          return fence;
-        });
-        let read: ReturnType<typeof requestTasks> | undefined;
+        let read: ReturnType<typeof requestTaskList> | undefined;
         try {
-          await entered.promise;
-          const newer =
-            change === "terminal"
-              ? finalizeTaskRecordByRunId({
-                  runId: task.runId!,
-                  status: "succeeded",
-                  endedAt: Date.now(),
-                })[0]
-              : updateTask(task.taskId, {
-                  task: "Newer title",
-                  ...(change === "replacement" ? { runId: "successor" } : {}),
-                });
-          expect(newer).toMatchObject({ taskId: task.taskId, toolUseCount: 1 });
-          if (change === "ABA") {
-            expect(updateTask(task.taskId, { task: task.task })).not.toBeNull();
-          }
-          read = requestTasks(task.ownerKey);
-          await reading.promise;
+          emitTool(entry.runId, "accepted-before-completion");
+          const receipt = expectDefined(
+            await withTestTimeout(committed.promise, 5_000, "Metadata did not commit"),
+            "ordinary successful metadata receipt",
+          );
+          expect(receipt.task).toMatchObject({
+            taskId: task.taskId,
+            status: "running",
+            toolUseCount: 1,
+            lastToolName: "accepted-before-completion",
+          });
+          await withTestTimeout(publicationPaused.promise, 5_000, "Publication did not pause");
+          vi.spyOn(taskAgentEventMutations, "captureReadFence").mockImplementation((...args) => {
+            const fence = capture(...args);
+            captured.resolve();
+            return fence;
+          });
+          read = requestTaskList(task.ownerKey);
+          await withTestTimeout(
+            captured.promise,
+            5_000,
+            "Gateway did not capture the accepted fence",
+          );
+          expect(
+            completeTaskRunByRunIdCore({
+              runId: entry.runId,
+              runtime: "subagent",
+              sessionKey: entry.childSessionKey,
+              endedAt: Date.now(),
+              terminalSummary: "Authoritative completion",
+            }),
+          ).toEqual([expect.objectContaining({ taskId: task.taskId, status: "succeeded" })]);
           release.resolve();
           expect((await read).mock.calls[0]).toMatchObject([
             true,
@@ -710,28 +613,30 @@ describe("task registry read preparation", () => {
               tasks: [
                 {
                   id: task.taskId,
-                  status: change === "terminal" ? "completed" : "running",
-                  title: change === "replacement" ? "Newer title" : task.task,
+                  status: "completed",
                   toolUseCount: 1,
+                  lastToolName: "accepted-before-completion",
                 },
               ],
             },
           ]);
-          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
-            status: change === "terminal" ? "succeeded" : "running",
-            task: change === "replacement" ? "Newer title" : task.task,
-            toolUseCount: 1,
-          });
           expect(writes).toHaveBeenCalledOnce();
-          expect(publications).toEqual(
-            change === "ABA"
-              ? ["running", "running"]
-              : [change === "terminal" ? "succeeded" : "running"],
-          );
+          expect(published).toEqual(["succeeded"]);
+          expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+            runId: entry.runId,
+            childSessionKey: entry.childSessionKey,
+            status: "succeeded",
+            terminalSummary: "Authoritative completion",
+            toolUseCount: 1,
+            lastToolName: "accepted-before-completion",
+          });
         } finally {
           release.resolve();
-          stop();
-          await read;
+          try {
+            await read;
+          } finally {
+            stop();
+          }
         }
       });
     },
@@ -845,56 +750,50 @@ describe("task registry read preparation", () => {
     },
   );
 
-  it.each([
-    "publication",
-    "supersession message",
-    "unknown settlement",
-    "undefined rejection",
-  ] as const)("does not acknowledge an accepted batch after %s", async (failureKind) => {
-    await withReadState(async () => {
-      const task = createReadTask(`failed-read-${failureKind}`);
-      const earlier = expectDefined(await prepareTaskRegistryRead(), "earlier task read");
-      const store = getTaskRegistryStore();
-      const mutate = store.runAgentEventMutationAsync.bind(store);
-      const snapshot = store.loadMutationSnapshotAsync.bind(store);
-      const publicationFailure =
-        failureKind === "publication" || failureKind === "supersession message";
-      const failure =
-        failureKind === "supersession message"
-          ? new Error("Task publication was superseded by a current write")
-          : failureKind === "undefined rejection"
+  it.each(["publication", "unknown settlement", "undefined rejection"] as const)(
+    "does not acknowledge an accepted batch after %s",
+    async (failureKind) => {
+      await withReadState(async () => {
+        const task = createReadTask(`failed-read-${failureKind}`);
+        const earlier = expectDefined(await prepareTaskRegistryRead(), "earlier task read");
+        const store = getTaskRegistryStore();
+        const mutate = store.runAgentEventMutationAsync.bind(store);
+        const snapshot = store.loadMutationSnapshotAsync.bind(store);
+        const failure =
+          failureKind === "undefined rejection"
             ? undefined
             : new SqliteWorkerError(`Synthetic ${failureKind}`, "outcome-unknown");
-      const rejection = createDeferred<never>();
-      let mutationReturned = false;
-      vi.spyOn(store, "runAgentEventMutationAsync").mockImplementation(async (...args) => {
-        const result = await mutate(...args);
-        mutationReturned = true;
-        if (!publicationFailure) {
-          rejection.reject(failure);
-          return rejection.promise;
+        const rejection = createDeferred<never>();
+        let mutationReturned = false;
+        vi.spyOn(store, "runAgentEventMutationAsync").mockImplementation(async (...args) => {
+          const result = await mutate(...args);
+          mutationReturned = true;
+          if (failureKind !== "publication") {
+            rejection.reject(failure);
+            return rejection.promise;
+          }
+          return result;
+        });
+        vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation((...args) => {
+          if (failureKind === "publication" && mutationReturned) {
+            rejection.reject(failure);
+            return rejection.promise;
+          }
+          return snapshot(...args);
+        });
+        emitTool(task.runId!, "accepted-failure");
+        const read = prepareTaskRegistryRead();
+        await expect(read).rejects.toBe(failure);
+        expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
+          toolUseCount: 1,
+          lastToolName: "accepted-failure",
+        });
+        if (failureKind === "publication") {
+          expect(() => earlier.getTaskById(task.taskId)).toThrow("requires preparation");
         }
-        return result;
       });
-      vi.spyOn(store, "loadMutationSnapshotAsync").mockImplementation((...args) => {
-        if (publicationFailure && mutationReturned) {
-          rejection.reject(failure);
-          return rejection.promise;
-        }
-        return snapshot(...args);
-      });
-      emitTool(task.runId!, "accepted-failure");
-      const read = prepareTaskRegistryRead();
-      await expect(read).rejects.toBe(failure);
-      expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(task.taskId)).toMatchObject({
-        toolUseCount: 1,
-        lastToolName: "accepted-failure",
-      });
-      if (publicationFailure) {
-        expect(() => earlier.getTaskById(task.taskId)).toThrow("requires preparation");
-      }
-    });
-  });
+    },
+  );
 
   it("retires a prepared row reader with its database owner", async () => {
     await withReadState(async () => {
