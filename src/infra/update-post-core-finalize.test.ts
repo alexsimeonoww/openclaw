@@ -366,7 +366,7 @@ describe("foldPostCoreFinalizeIntoResult", () => {
     expect(folded.status).toBe("error");
     expect(folded.reason).toBe("post-core-plugin-finalize-failed");
     expect(folded.steps.at(-1)).toMatchObject({
-      name: "post-core plugin finalize",
+      name: "post-core-plugin-finalize",
       exitCode: 2,
       stderrTail: "boom",
     });

@@ -95,7 +95,13 @@ function doctorStep(step: FailureStep): boolean {
   );
   return (
     doctorFacts &&
-    (["doctor", "openclaw doctor", "candidate doctor", "finalize:doctor"].includes(step.step) ||
+    ([
+      "doctor",
+      "openclaw doctor",
+      "candidate doctor",
+      "candidate-doctor",
+      "finalize:doctor",
+    ].includes(step.step) ||
       (step.step === "finalize:targetConfigConvergence" && facts.length > 0))
   );
 }

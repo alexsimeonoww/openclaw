@@ -92,7 +92,7 @@ export async function swapStagedPackageInstall(
     stderrTail: string | null,
     code = "swap-failed",
   ): UpdateStepResult => ({
-    name: "global install swap",
+    name: "package-swap",
     command: `swap ${params.stage.packageRoot} -> ${targetPackageRoot ?? "unknown root"}`,
     cwd: targetLayout?.globalRoot ?? params.stage.prefix,
     durationMs: Date.now() - startedAt,
@@ -425,7 +425,7 @@ export async function swapStagedPackageInstall(
                 null,
                 "Package transaction retirement has started; automatic rollback is no longer available.",
               ),
-              name: "global install rollback",
+              name: "package-rollback",
               activePackageRoot,
             });
           }
@@ -440,7 +440,7 @@ export async function swapStagedPackageInstall(
               assertCurrent();
               return {
                 ...step(1, null, formatErrorMessage(error)),
-                name: "global install rollback",
+                name: "package-rollback",
                 activePackageRoot,
                 ...(error instanceof NativePackageRollbackError ? { reason: error.reason } : {}),
               };
@@ -454,7 +454,7 @@ export async function swapStagedPackageInstall(
                   : null,
                 messages.join("\n") || null,
               ),
-              name: "global install rollback",
+              name: "package-rollback",
               activePackageRoot,
               command: `restore ${backupRoot} -> ${targetSwapRoot}`,
               durationMs: Date.now() - rollbackStartedAt,
@@ -480,7 +480,7 @@ export async function swapStagedPackageInstall(
                 null,
                 `Installation recovery is unverified; inspect the installation and backups in ${targetLayout.globalRoot} before restarting.`,
               ),
-              name: "global install backup retention",
+              name: "package-backup-retention",
             };
           }
           // Seal automatic rollback once retirement begins, but retain the actual
@@ -505,7 +505,7 @@ export async function swapStagedPackageInstall(
               rootLink && packageBackedUp ? await rootLink.retire(assertRetirementCurrent) : null;
             assertRetirementCurrent();
             if (linkRetention) {
-              return { ...step(1, null, linkRetention), name: "global install backup retention" };
+              return { ...step(1, null, linkRetention), name: "package-backup-retention" };
             }
             if (hadPackage && previousRoot?.kind !== "link") {
               const message = await discardPackageUpdateBackup(
@@ -532,7 +532,7 @@ export async function swapStagedPackageInstall(
             if (messages.length) {
               return {
                 ...step(1, null, messages.join("\n")),
-                name: "global install backup retention",
+                name: "package-backup-retention",
                 // Only this verified obsolete-resource path qualifies the warning.
                 // Recovery refusal and unclassified link outcomes remain hard.
                 advisory: {

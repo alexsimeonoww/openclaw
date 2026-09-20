@@ -210,18 +210,20 @@ beforeEach(() => {
 
 describe("saved update failure resolution", () => {
   it.each([
-    "post-update-failed",
-    "doctor-failed",
-    "finalize:doctor",
-    "repair-requires-config-change",
-    "post-plugin-doctor-invalid-config",
+    ["post-update-failed", "finalize:doctor"],
+    ["doctor-failed", "finalize:doctor"],
+    ["finalize:doctor", "finalize:doctor"],
+    ["repair-requires-config-change", "finalize:doctor"],
+    ["post-plugin-doctor-invalid-config", "finalize:doctor"],
+    ["doctor-failed", "openclaw doctor"],
+    ["doctor-failed", "candidate-doctor"],
   ])(
-    "resolves the attributed %s Doctor blocker without rewriting its failed run",
-    async (reason) => {
+    "resolves the attributed %s Doctor blocker at %s without rewriting its failed run",
+    async (reason, step) => {
       failedRun.reason = reason;
       failedRun.steps = [
         {
-          step: "finalize:doctor",
+          step,
           status: "failed",
           failureFacts: [{ check: "doctor", code: "doctor-failed" }],
         },

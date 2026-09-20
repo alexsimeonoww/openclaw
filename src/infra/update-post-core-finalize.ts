@@ -287,7 +287,7 @@ export function foldPostCoreFinalizeIntoResult(
     steps: [
       ...result.steps,
       {
-        name: "post-core plugin finalize",
+        name: "post-core-plugin-finalize",
         command: "openclaw update finalize",
         cwd: result.root ?? process.cwd(),
         durationMs: 0,

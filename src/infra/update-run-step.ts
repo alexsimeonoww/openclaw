@@ -69,14 +69,15 @@ export function updateRunStepsFromResultStep(step: ResultStep): UpdateRunStep[] 
       step: text(step.name),
       status: step.exitCode === 0 || step.advisory ? "completed" : "failed",
       exitCode: step.exitCode,
-      ...(step.failureFacts?.length && !step.advisory
-        ? { failureFacts: step.failureFacts.slice(0, 5) }
-        : {}),
-      ...(configWriteRefusal ? { configWriteRefusal } : {}),
-      ...(snapshotCapacity ? { snapshotCapacity } : {}),
-      ...(step.exitCode !== 0
-        ? { detail: text(step.advisory?.message ?? summarizeUpdateStepFailure(step)) }
-        : {}),
+      // A completed retry replaces diagnostics from the previous attempt with the same ID.
+      failureFacts:
+        step.failureFacts?.length && !step.advisory ? step.failureFacts.slice(0, 5) : undefined,
+      configWriteRefusal,
+      snapshotCapacity,
+      detail:
+        step.exitCode !== 0
+          ? text(step.advisory?.message ?? summarizeUpdateStepFailure(step))
+          : undefined,
     },
     ...warnings.slice(0, UPDATE_RUN_DIAGNOSTIC_LIMIT).map((detail, index) => ({
       step: text(`warning:${step.name}${index === 0 ? "" : `:${index + 1}`}`),

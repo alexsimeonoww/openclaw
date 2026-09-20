@@ -36,6 +36,21 @@ export const triageTestRuntimeEntrypoints = {
     sourceWorkerName: "../cli/update-cli/update-command-handoff",
     distWorkerPath: "cli/update-cli/update-command-handoff.js",
   },
+  oneShotExit: {
+    currentModuleUrl,
+    sourceWorkerName: "../cli/one-shot-exit",
+    distWorkerPath: "cli/one-shot-exit.js",
+  },
+  updateFailureTriage: {
+    currentModuleUrl,
+    sourceWorkerName: "../cli/update-cli/update-command-triage",
+    distWorkerPath: "cli/update-cli/update-command-triage.js",
+  },
+  updateCommandResult: {
+    currentModuleUrl,
+    sourceWorkerName: "../cli/update-cli/update-command-result",
+    distWorkerPath: "cli/update-cli/update-command-result.js",
+  },
   continuation: {
     currentModuleUrl,
     sourceWorkerName: "triage-continuation",

@@ -239,7 +239,7 @@ describe("mutable update execution", () => {
             logTail: [],
             steps: [
               {
-                name: "Checking Gateway startup",
+                name: "candidate-gateway-startup",
                 command: "gateway run",
                 cwd: root,
                 durationMs: 70_000,
