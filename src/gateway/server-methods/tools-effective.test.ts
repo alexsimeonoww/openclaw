@@ -448,7 +448,7 @@ describe("tools.effective handler", () => {
       );
     const first = createInvokeParams({ sessionKey: "main:abc" });
     await first.invoke();
-    const loaded = runtimeMocks.loadSessionEntry();
+    const loaded = runtimeMocks.loadSessionEntry("main:abc");
     runtimeMocks.loadSessionEntry.mockReturnValueOnce({
       ...loaded,
       entry: { ...loaded.entry!, sessionId: "session-2" },
