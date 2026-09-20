@@ -14,6 +14,7 @@ import {
   resetGatewayWorkAdmission,
 } from "../src/process/gateway-work-admission.js";
 import { drainGlobalSingletonLifecycleState } from "../src/shared/global-singleton.js";
+import { resetTaskRegistryListenerState } from "../src/tasks/task-registry-listener-state.js";
 import {
   type CustomElementTracking,
   dropRepoOwnedCustomElements,
@@ -451,6 +452,7 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
       markGatewayRestartDraining();
     }
     resetOpenClawGlobalRunState();
+    resetTaskRegistryListenerState();
     resetAgentEventsForTest();
     resetOpenClawGlobalDiagnosticState();
     resetOpenClawSessionSuspensionState();

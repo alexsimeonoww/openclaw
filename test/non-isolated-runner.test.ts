@@ -102,6 +102,27 @@ it("starts with an empty, attribute-free body and native default focus", () => {
 
 function fixtureFiles(): Record<string, string> {
   const sourcePath = (name: string) => JSON.stringify(path.join(repoRoot, "src", name));
+  const taskEventFixture = (name: string) => `
+import { expect, it } from "vitest";
+import { emitAgentEvent } from ${sourcePath("infra/agent-events.ts")};
+import { prepareTaskRegistryRead } from ${sourcePath("tasks/task-registry-read.ts")};
+import { configureTaskRegistryRuntime } from ${sourcePath("tasks/task-registry.store.ts")};
+import { createTaskFixture } from ${sourcePath("tasks/task-registry.test-support.ts")};
+import { withOpenClawTestState } from ${sourcePath("test-utils/openclaw-test-state.ts")};
+import { createInMemoryTaskRegistryStore } from ${sourcePath("test-utils/task-registry-store.ts")};
+it("persists task events in the ${name} file", async () => {
+  await withOpenClawTestState({ layout: "state-only" }, async () => {
+    configureTaskRegistryRuntime({ store: createInMemoryTaskRegistryStore() });
+    const task = createTaskFixture("cli", {
+      runId: "task-event-${name}", task: "Observe the current file's task event",
+      notifyPolicy: "silent", deliveryStatus: "not_applicable",
+    });
+    emitAgentEvent({ runId: task.runId!, stream: "tool", data: { phase: "start", name: "file-event" } });
+    const read = await prepareTaskRegistryRead();
+    expect(read?.getTaskById(task.taskId)).toMatchObject({ toolUseCount: 1, lastToolName: "file-event" });
+  });
+});
+`;
   const payloadImports = `import { createRequire } from "node:module";
 import { queryObjects } from "node:v8";
 const { ManualPayload, AutoPayload } = createRequire(import.meta.url)("./mock-payloads.cjs");`;
@@ -402,6 +423,8 @@ it("reloads the redirected mock after a real import", () => {
 `,
     ...mockResolutionFixtureFiles,
     ...testApiLifecycleFixtureFiles(repoRoot),
+    "05-c-task-event-producer.test.ts": taskEventFixture("producer"),
+    "05-d-task-event-observer.test.ts": taskEventFixture("observer"),
     ...documentFocusFixtureFiles(),
   };
 }
@@ -448,8 +471,8 @@ async function assertCompletion(
   const report: JsonTestResults = JSON.parse(await fs.readFile(expected.reportPath, "utf8"));
   expect(report.testResults.map((file) => file.name).toSorted()).toEqual(expected.files);
   expect(report).toMatchObject({
-    numTotalTests: 48,
-    numPassedTests: 47,
+    numTotalTests: 50,
+    numPassedTests: 49,
     numPendingTests: 1,
     numFailedTests: 0,
     numTodoTests: 0,
