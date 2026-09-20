@@ -152,9 +152,14 @@ it.each(policyCases)(
   60000,
 );
 
-it.each(["revoke", "active"] as const)(
-  "preserves native model authority while a real control is queued: %s",
-  async (kind) => {
+it.each([
+  { operation: "model", kind: "revoke" },
+  { operation: "model", kind: "active" },
+  { operation: "prompt", kind: "revoke" },
+  { operation: "prompt", kind: "active" },
+] as const)(
+  "preserves native $operation authority while a real control is queued: $kind",
+  async ({ operation, kind }) => {
     await withOpenClawTestState({ label: "acp-native-control-authority" }, async (state) => {
       const config: OpenClawConfig = {
         session: { store: path.join(state.sessionsDir(), "sessions.json") },
@@ -178,15 +183,14 @@ it.each(["revoke", "active"] as const)(
             sessionKey: attempt.target.sessionKey,
             native: true,
           },
-          model: "initial",
+          model: operation === "model" ? "initial" : "selected",
           modelExplicit: true,
         };
         const handle = await runtime.ensureSession(nativeTarget);
         const getStatus = runtime.getStatus.bind(runtime);
         const initial = await getStatus({ handle });
-        expect(initial.models?.currentModelId).toBe("initial");
+        expect(initial.models?.currentModelId).toBe(nativeTarget.model);
         const before = await peerStates(native.peerDirectory);
-        const controls = vi.spyOn(runtime, "setModel");
         holdingControl = runtime.setMode({ handle, mode: "review" });
         void holdingControl.catch(() => {});
         await waitForFixtureFile(
@@ -200,18 +204,19 @@ it.each(["revoke", "active"] as const)(
         const upstream: typeof import("acpx/runtime") = await import(
           pathToFileURL(require.resolve("acpx/runtime")).href
         );
-        const upstreamControls = vi.spyOn(upstream.AcpxRuntime.prototype, "setModel");
+        const upstreamOperation =
+          operation === "model"
+            ? vi.spyOn(upstream.AcpxRuntime.prototype, "setModel")
+            : vi.spyOn(upstream.AcpxRuntime.prototype, "startTurn");
         // The warmed manager queues this call before polling returns; the earlier native control stays held.
-        const waitForBoundary = () => expect.poll(() => upstreamControls.mock.calls.length).toBe(1);
         run = runAgentHarnessAttempt(attempt.input);
         void run.catch(() => {});
         await Promise.race([
-          waitForBoundary(),
+          expect.poll(() => upstreamOperation.mock.calls.length).toBe(1),
           run.then((result) => {
-            throw new Error("Attempt ended before native control boundary", { cause: result });
+            throw new Error(`Attempt ended before native ${operation} boundary`, { cause: result });
           }),
         ]);
-        expect(controls).toHaveBeenCalledOnce();
         if (kind === "revoke") {
           attempt.close();
         }
@@ -232,8 +237,8 @@ it.each(["revoke", "active"] as const)(
           expect.soft(outcome?.terminal).toMatchObject({
             kind: "failed",
           });
-          expect.soft(persisted.models?.currentModelId).toBe("initial");
-          expect.soft(records[0]?.currentModelId).toBe("initial");
+          expect.soft(persisted.models?.currentModelId).toBe(nativeTarget.model);
+          expect.soft(records[0]?.currentModelId).toBe(nativeTarget.model);
           expect.soft(records[0]?.modelChanges).toEqual(before[0]?.modelChanges);
           expect.soft(records[0]?.history).toEqual(before[0]?.history);
           expect.soft(effects).toEqual([]);

@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { AcpPermissionHandler } from "acpx/runtime";
+import type {
+  AcpPermissionHandler,
+  AcpRuntimeTurnInput as AcpxRuntimeTurnInput,
+} from "acpx/runtime";
 import { consumeAcpTurnStream } from "openclaw/plugin-sdk/acp-runtime";
 import {
   clearActiveEmbeddedRun,
@@ -242,7 +245,8 @@ export async function runAcpHarnessAttempt(params: {
     };
     const requestId = `${admission.entryId}:acp:${randomUUID()}`;
     // Prose labels keep file paths and literal user text out of native slash-command dispatch.
-    const turn: AcpRuntimeTurnInput & { onPermissionRequest: AcpPermissionHandler } = {
+    const turn: AcpRuntimeTurnInput &
+      Pick<AcpxRuntimeTurnInput, "onPermissionRequest" | "assertActive"> = {
       handle,
       text: [
         built.developerInstructions
@@ -258,6 +262,7 @@ export async function runAcpHarnessAttempt(params: {
       mode: "prompt",
       requestId,
       signal,
+      assertActive,
       onPermissionRequest,
       ...(input.images?.length
         ? {

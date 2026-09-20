@@ -90,7 +90,7 @@ type AcpxRuntimeTestOptions = Record<string, unknown> & {
   openclawProcessCleanup?: AcpxProcessCleanupDeps;
 };
 type OpenClawRuntimeTurnInput = Parameters<NonNullable<AcpRuntime["startTurn"]>>[0] &
-  Pick<Parameters<BaseAcpxRuntime["startTurn"]>[0], "onPermissionRequest">;
+  Pick<Parameters<BaseAcpxRuntime["startTurn"]>[0], "onPermissionRequest" | "assertActive">;
 type BridgeSession = { sessionKey: string; agentId?: string; native?: boolean };
 type OpenClawRuntimeEnsureInput = Parameters<AcpRuntime["ensureSession"]>[0] & {
   agentCommand?: string[];

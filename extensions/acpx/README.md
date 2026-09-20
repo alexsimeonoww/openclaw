@@ -76,3 +76,19 @@ Use the ACP docs for harness-specific setup, permission modes, and model/runtime
 - Plugin id: `acpx`
 - Package: `@openclaw/acpx`
 - Minimum OpenClaw host: `2026.4.25`
+
+## Temporary ACPX source build
+
+This branch uses ACPX commit `1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba` while waiting
+for its npm release. Both the root development dependency and this plugin's runtime
+dependency pin that commit. pnpm runs ACPX's upstream `prepack` build; OpenClaw does
+not vendor or patch the runtime. `pnpm-workspace.yaml` approves that exact source
+URL and lists the version-scoped dependency cooldown exceptions.
+
+This pin is for source development, not plugin publication: managed plugin
+installation disables lifecycle scripts, and the npm release-lock verifier rejects
+the temporary Git artifact's integrity. Keep those safeguards enabled.
+
+Before publishing, replace both ACPX pins with the released npm version, regenerate
+`pnpm-lock.yaml` and the plugin's npm install metadata, and remove the temporary
+source-build approval. Remove this section after completing that cutover.

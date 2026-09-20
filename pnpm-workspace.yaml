@@ -10,17 +10,15 @@ minimumReleaseAgeStrict: true
 
 # Trusted Codex runtimes are outside the dependency cooldown.
 minimumReleaseAgeExclude:
-  # Reviewed ACPX runtime release; remove after 2026-09-24T08:58:53Z.
-  - acpx@0.17.0
-  # Published ACPX runtime dependency; remove after 2026-09-20T08:36Z.
-  - "@openclaw/fs-safe@0.10.0"
-  - "@openclaw/fs-safe-darwin-arm64@0.10.0"
-  - "@openclaw/fs-safe-darwin-x64@0.10.0"
-  - "@openclaw/fs-safe-linux-arm64-gnu@0.10.0"
-  - "@openclaw/fs-safe-linux-arm64-musl@0.10.0"
-  - "@openclaw/fs-safe-linux-x64-gnu@0.10.0"
-  - "@openclaw/fs-safe-linux-x64-musl@0.10.0"
-  - "@openclaw/fs-safe-win32-x64-msvc@0.10.0"
+  # Reviewed ACPX main build dependencies; remove after 2026-09-22T12:38:43Z.
+  - "@openclaw/fs-safe@0.12.0"
+  - "@openclaw/fs-safe-darwin-arm64@0.12.0"
+  - "@openclaw/fs-safe-darwin-x64@0.12.0"
+  - "@openclaw/fs-safe-linux-arm64-gnu@0.12.0"
+  - "@openclaw/fs-safe-linux-arm64-musl@0.12.0"
+  - "@openclaw/fs-safe-linux-x64-gnu@0.12.0"
+  - "@openclaw/fs-safe-linux-x64-musl@0.12.0"
+  - "@openclaw/fs-safe-win32-x64-msvc@0.12.0"
   # Published ACPX runtime dependency; remove after 2026-09-17T21:44:31Z.
   - zod@4.6.2
   # GHSA-jqcg-44mw-7w3h trust-subnet fix; remove after 2026-09-22 06:13 UTC.
@@ -108,6 +106,8 @@ overrides:
   uuid: 14.0.2
 
 allowBuilds:
+  # Temporary reviewed source build; remove when replacing the ACPX Git pin with a release.
+  acpx@https://codeload.github.com/openclaw/acpx/tar.gz/1a4b3fdee63fe8095e5a889e197e5349c1c9c0ba: true
   "@google/genai": true
   "@lydell/node-pty": true
   "@matrix-org/matrix-sdk-crypto-nodejs": true
