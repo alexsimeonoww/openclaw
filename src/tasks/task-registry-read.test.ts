@@ -382,48 +382,73 @@ describe("task registry read preparation", () => {
         }
         return result;
       });
-      const immediate = timers.setImmediate;
-      vi.mocked(timers.setImmediate).mockImplementationOnce(async (...args) => {
-        await immediate(...args);
-        await committed.promise;
+      const reader = await import("./task-registry-read.js");
+      const prepare = reader.prepareTaskRegistryRead;
+      // Preparatory yields must not consume the scan's publication barrier.
+      vi.spyOn(reader, "prepareTaskRegistryRead").mockImplementationOnce(async () => {
+        await timers.setImmediate();
+        return prepare();
       });
+      const immediate = timers.setImmediate;
       let workMs = 0;
       vi.spyOn(performance, "now").mockImplementation(() => workMs);
       let mutation: Promise<unknown> | undefined;
+      let page: ReturnType<typeof listTaskRecordPage> | undefined;
       let selectedBeforeMutation = false;
+      const failures: unknown[] = [];
+      const recordFailure = (error: unknown) => {
+        if (!failures.includes(error)) {
+          failures.push(error);
+        }
+      };
       try {
-        const page = await withTestTimeout(
-          listTaskRecordPage({
-            offset: 0,
-            limit: 1,
-            prepareFilter: (batch) => {
-              workMs += 20;
-              if (!mutation) {
-                selectedBeforeMutation = batch.some((task) => task.taskId === selected.taskId);
-                mutation = createRunningTaskRunCoreWithReceiptAsync({
-                  runtime: selected.runtime,
-                  runId: selected.runId!,
-                  task: selected.task,
-                  ownerKey: selected.ownerKey,
-                  scopeKind: selected.scopeKind,
-                  requesterSessionKey: selected.requesterSessionKey,
-                  notifyPolicy: "silent",
-                  deliveryStatus: "not_applicable",
-                  detail: { historyGeneration: "replacement" },
-                });
-              }
-              return (task) => task.taskId === selected.taskId;
-            },
-          }),
+        page = listTaskRecordPage({
+          offset: 0,
+          limit: 1,
+          prepareFilter: (batch) => {
+            workMs += 20;
+            if (!mutation) {
+              selectedBeforeMutation = batch.some((task) => task.taskId === selected.taskId);
+              mutation = createRunningTaskRunCoreWithReceiptAsync({
+                runtime: selected.runtime,
+                runId: selected.runId!,
+                task: selected.task,
+                ownerKey: selected.ownerKey,
+                scopeKind: selected.scopeKind,
+                requesterSessionKey: selected.requesterSessionKey,
+                notifyPolicy: "silent",
+                deliveryStatus: "not_applicable",
+                detail: { historyGeneration: "replacement" },
+              });
+              vi.mocked(timers.setImmediate).mockImplementationOnce(async (...args) => {
+                await immediate(...args);
+                await committed.promise;
+              });
+            }
+            return (task) => task.taskId === selected.taskId;
+          },
+        });
+        const result = await withTestTimeout(
+          page,
           5_000,
           "Page joined an identity-changing publication",
         );
         expect(selectedBeforeMutation).toBe(true);
         expect(held).toBe(true);
-        expect(page).toEqual({ ok: false, error: "registry_changed" });
+        expect(result).toEqual({ ok: false, error: "registry_changed" });
+      } catch (error) {
+        recordFailure(error);
       } finally {
+        committed.resolve();
         release.resolve();
-        await mutation;
+        await page?.catch(recordFailure);
+        await mutation?.catch(recordFailure);
+      }
+      if (failures.length === 1) {
+        throw failures[0];
+      }
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "Page proof and cleanup failed", { cause: failures[0] });
       }
     });
   });
