@@ -4,7 +4,6 @@ import type { UpdateCandidateRehearsal } from "../../infra/update-candidate-rehe
 import * as repairAgent from "../../infra/update-repair-agent.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { executeMutableUpdate } from "./update-command-execution.js";
-import * as recovery from "./update-command-recovery.js";
 import * as repair from "./update-command-repair.js";
 
 const { executionParams, mocks, successfulUpdate } =
@@ -36,16 +35,13 @@ it.each(["unavailable", "repaired", "revoked"] as const)(
         cleanup: async () => {},
       };
       const cleanup = vi.fn(async () => {});
-      let revoked = false;
-      vi.spyOn(recovery, "assertUpdateCommandRecovery").mockImplementation(() => {
-        if (revoked) {
-          throw new Error("Update recovery authority changed.");
-        }
-      });
+      const params = executionParams("package");
       mocks.validateCanary.mockImplementationOnce(async (options) => {
         expect(options.retainFailedRehearsal).toBe(true);
         expect(options.sourceConfigHash).toEqual(expect.any(String));
-        revoked = outcome === "revoked";
+        if (outcome === "revoked") {
+          params.opts.recovery = {};
+        }
         return {
           status: "error",
           reason: "doctor-failed",
@@ -81,10 +77,16 @@ it.each(["unavailable", "repaired", "revoked"] as const)(
         await validateCandidate("/candidate");
         return successfulUpdate;
       });
-      await executeMutableUpdate(executionParams("package"));
+      const execution = await executeMutableUpdate(params);
       expect(cleanup).toHaveBeenCalledOnce();
       expect(runRepair).toHaveBeenCalledTimes(outcome === "revoked" ? 0 : 1);
       expect(mocks.validateCanary).toHaveBeenCalledTimes(outcome === "repaired" ? 2 : 1);
+      if (outcome === "revoked") {
+        expect(execution).toMatchObject({
+          result: { status: "error" },
+          failure: { cause: { name: "UpdateCommandRecoveryPendingError" } },
+        });
+      }
     });
   },
 );
